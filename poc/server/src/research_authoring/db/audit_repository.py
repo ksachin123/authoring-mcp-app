@@ -65,7 +65,7 @@ def get_audit_trail_for_target(
     db: sqlite3.Connection, target_type: str, target_id: str
 ) -> list[AuditLogEntry]:
     rows = db.execute(
-        "SELECT * FROM audit_log WHERE target_type = ? AND target_id = ? ORDER BY timestamp ASC",
+        "SELECT * FROM audit_log WHERE target_type = ? AND target_id = ? ORDER BY timestamp ASC, rowid ASC",
         (target_type, target_id),
     ).fetchall()
     return [_row_to_entry(row) for row in rows]
