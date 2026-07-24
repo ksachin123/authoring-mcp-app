@@ -92,6 +92,29 @@ In a ChatGPT conversation with the app, the Skill, and (optionally) FactSet's co
 3. Approve it, draft a report section, commit it, then assemble and export the report to Markdown.
 4. Inspect the audit trail: `sqlite3 poc/server/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`
 
+## Sample walkthrough
+
+A representative session, turn by turn, with what to expect in ChatGPT at each step.
+This assumes the Skill and the app are both enabled in the conversation.
+
+| # | Analyst says | Tools called (via the Skill) | What you see in ChatGPT |
+|---|---|---|---|
+| 1 | *"I want to research Acme Corp's Q2 revenue growth. I've attached their earnings release PDF — draft a thesis point on it."* | `ingest_document_tool` → `synthesize_artefact_tool` → `run_eval_tool` | Chat narration ("I've registered the source and drafted a thesis point…"), then ChatGPT **switches surfaces**: the `report-workspace` widget opens inline/fullscreen, showing a "Pending Artefacts" list with the artefact's cited text, numbered citation markers (`[1]`, `[2]`…), and an **Approve** button. |
+| 2 | *(inside the widget)* clicks `[1]` | — (widget-local; no tool call) | A small panel opens showing the claim's citation. |
+| 3 | *(inside the widget)* clicks **Approve** | `approve_artefact_tool` (called directly from the widget) | The artefact's status updates to `approved` in place inside the widget. |
+| 4 | *"Looks good, approved. Now draft the risk factors section."* | `draft_section_tool` | No widget — this stays in plain chat. ChatGPT prints the assembled draft text; refine it conversationally like any other chat turn. |
+| 5 | *"Commit that section."* | `commit_section_tool` | Plain chat confirmation that the section is now persisted server-side as a versioned `ReportSection`. |
+| 6 | *"Now research the same quarter using a recent analyst note you can find on the web."* | web search → `ingest_web_result_tool` → `synthesize_artefact_tool` → `run_eval_tool` | Same as turn 1: the widget opens with the new artefact pending approval, sourced and cited from the web result. |
+| 7 | *"Assemble the report with intro then risk factors, and export it."* | `assemble_report_tool` → `export_report_tool` | No widget — the final Markdown deliverable (headers, section prose, numbered Sources list) is printed directly in chat. |
+
+**Which tools render the widget:** only `run_eval_tool` and `approve_artefact_tool` carry
+the `_meta["openai/outputTemplate"]` pointing at `ui://widget/report-workspace.html` — every
+other tool is plain chat. If a turn that should hit `run_eval_tool` (e.g. turn 1) instead
+returns a plain text answer with no tool-call trace at all, ChatGPT likely read the attached
+material natively and skipped the Skill entirely rather than something being broken
+server-side — see the Skill's explicit "Do not answer directly from an attached file…"
+instruction in [`poc/skill/report-authoring-skill.md`](poc/skill/report-authoring-skill.md).
+
 ## Deploying to Render (free tier)
 
 `render.yaml` at the repo root is a ready-to-use Render Blueprint. In the Render dashboard, choose
