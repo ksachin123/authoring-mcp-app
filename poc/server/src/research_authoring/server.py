@@ -70,17 +70,20 @@ for _asset in ("index.html", "bundle.js"):
         logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
 
 
-# TEMPORARY debugging aid: the widget renders a placeholder frame in ChatGPT
-# but shows zero content -- not even the visible error text
-# waitForOpenAiBridge() renders on failure -- meaning the ~1MB inline script
-# (React + ReactDOM bundled) may not be executing in the iframe AT ALL, not
-# just failing partway through. Setting WIDGET_DEBUG_MINIMAL=1 swaps in a
-# dependency-free, few-hundred-byte widget instead, to isolate whether size/
-# complexity is what's silently blocked. Remove once diagnosed.
-# Hardcoded true (not env-gated) while actively bisecting -- simpler to flip
-# back to `os.environ.get("WIDGET_DEBUG_MINIMAL") == "1"` (or just delete this
-# whole block) than to manage a Render dashboard env var per test round.
-_WIDGET_DEBUG_MINIMAL = True
+# TEMPORARY debugging aid, now DISABLED. Bisection with this minimal widget
+# (confirmed live in ChatGPT) established:
+#  - script execution is NOT blocked by size/complexity (a dependency-free
+#    widget ran fine, ruling that out as the cause of the real bundle's
+#    earlier blank render)
+#  - it renders as a real styled/sandboxed iframe (a visible colored
+#    bordered box showed up, not just text dumped inline into the chat)
+#  - window.openai IS present, exposing exactly the members the real widget
+#    depends on (callTool, widgetState, setWidgetState), among many others
+# So the platform fully supports what the real widget needs. Re-enabling the
+# real bundle now that waitForOpenAiBridge()'s visible-error-on-failure
+# fallback (entry.tsx) can actually tell us something concrete if it still
+# fails, instead of a silent blank div.
+_WIDGET_DEBUG_MINIMAL = False
 _MINIMAL_TEST_WIDGET_HTML = (
     '<!doctype html><html><head><meta charset="utf-8">'
     "<title>Minimal Test Widget</title>"
