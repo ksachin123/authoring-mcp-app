@@ -1,0 +1,112 @@
+# Research Authoring on ChatGPT — POC
+
+A proof-of-concept validating a ChatGPT-native research authoring architecture for sell-side
+equity research: a Python MCP server backing a React Apps SDK widget inside ChatGPT, with
+claim-level citations, an approval gate, and a full audit trail.
+
+- **Design spec:** [`docs/superpowers/specs/2026-07-24-research-authoring-design.md`](docs/superpowers/specs/2026-07-24-research-authoring-design.md)
+- **Implementation plan:** [`docs/superpowers/plans/2026-07-24-research-authoring-poc.md`](docs/superpowers/plans/2026-07-24-research-authoring-poc.md)
+
+## Architecture at a glance
+
+- **`poc/server/`** — Python MCP server ([`mcp`](https://github.com/modelcontextprotocol/python-sdk) SDK's `FastMCP`), exposing nine tools across the pipeline: ingest → synthesize → eval → approve → draft → commit → assemble → export. Backed by SQLite with append-only versioning and a full audit log.
+- **`poc/widget/`** — React/TypeScript Apps SDK widget (the only non-Python part of the stack — ChatGPT renders Apps SDK UI in a browser iframe). Built with esbuild, served as static assets by the Python server.
+- **`poc/skill/`** — A ChatGPT Skill definition that sequences tool calls correctly (ingest → synthesize → eval → approve → commit → assemble → export).
+- **`render.yaml`** — Render.com free-tier deployment config.
+
+Two deliberate scope decisions for this POC phase, both documented in the plan:
+
+- **No LLM calls anywhere.** Claim extraction and groundedness evaluation are deterministic, non-AI stubs — they prove the pipeline's sequencing and governance, not real AI judgment. Swapping in real implementations later won't require changing any caller.
+- **FactSet is accessed only via ChatGPT's own FactSet connector**, never a direct API integration owned by this server. Our server only captures whatever the connector already fetched, via `ingest_connector_result`.
+
+## Prerequisites
+
+- Python 3.11+
+- Node.js 18+ and npm (for building the widget)
+- A ChatGPT workspace with [Developer Mode](https://developers.openai.com/apps-sdk/build/chatgpt-ui) and Skills enabled, plus FactSet's own connector enabled if you want to exercise that path
+
+## Setup
+
+### 1. Server
+
+```bash
+cd poc/server
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env   # defaults are fine for local dev
+```
+
+Run the tests:
+
+```bash
+pytest -v
+```
+
+### 2. Widget
+
+```bash
+cd poc/widget
+npm install
+npm run build
+```
+
+This produces `poc/widget/dist/bundle.js` and `dist/index.html`, which the Python server serves.
+
+### 3. Run the server locally
+
+```bash
+cd poc/server
+mkdir -p data
+PORT=8000 .venv/bin/python -m research_authoring.server
+```
+
+The MCP server listens on `http://0.0.0.0:8000`. Point ChatGPT Developer Mode at this URL (or your deployed URL) to register the app — see [Apps SDK docs](https://developers.openai.com/apps-sdk/build/chatgpt-ui) for the current registration flow.
+
+### 4. Configure the Skill
+
+Upload [`poc/skill/report-authoring-skill.md`](poc/skill/report-authoring-skill.md) as a workspace Skill following [OpenAI's current instructions](https://help.openai.com/en/articles/20001066-skills-in-chatgpt), scoped to your test user/role.
+
+### 5. Try it end-to-end
+
+In a ChatGPT conversation with the app, the Skill, and (optionally) FactSet's connector all enabled:
+
+1. Ask ChatGPT to research a company — via an uploaded document or FactSet's connector.
+2. Watch it synthesize an artefact, run the eval gate, and present it in the widget for your approval.
+3. Approve it, draft a report section, commit it, then assemble and export the report to Markdown.
+4. Inspect the audit trail: `sqlite3 poc/server/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`
+
+## Deploying to Render (free tier)
+
+`render.yaml` at the repo root is a ready-to-use Render Blueprint. In the Render dashboard, choose
+**New → Blueprint** and point it at this repo.
+
+Two things to know about the free tier:
+
+- **No persistent disk.** The SQLite file is wiped on every redeploy, restart, or wake-from-idle. This POC accepts that tradeoff deliberately — do the end-to-end walkthrough in one continuous session.
+- **Cold starts.** The instance spins down after ~15 minutes idle; the first request afterward can take up to ~50 seconds to wake up. If ChatGPT's connection attempt times out, just retry.
+
+## Project layout
+
+```
+poc/
+  server/           Python MCP server
+    src/research_authoring/
+      db/           SQLite schema, dataclasses, repositories (append-only versioning)
+      eval/         Deterministic (non-LLM) claim extraction & groundedness eval stubs
+      tools/        The nine MCP tools + server registration
+      server.py     Entrypoint
+    tests/          pytest suite (41 tests)
+  widget/           React/TypeScript Apps SDK widget
+  skill/            ChatGPT Skill definition
+render.yaml         Render.com free-tier deployment config
+docs/superpowers/
+  specs/            Design spec
+  plans/            Implementation plan
+```
+
+## Known limitations (by design, for this POC phase)
+
+- Eval and claim extraction are non-AI stubs — see `poc/server/src/research_authoring/eval/`.
+- Claim citation excerpts currently resolve to `Source.raw_content_ref` (often a pointer/URI, not retrieved text) — see the comment in `synthesize_artefact.py`.
+- Excludes: LSEG connector, full financial-error-taxonomy eval suite, second-tier compliance-reviewer gate, RBAC/multi-tenant rollout, PDF/Word export (Markdown only).
