@@ -74,3 +74,59 @@ def test_commit_section_versions_an_existing_section_without_duplicating_the_rep
     updated_report = get_latest_report(db, report.id)
     assert updated_report.section_ids == [first.id]
     assert get_latest_report_section(db, first.id).content == "v2 text, refined"
+
+
+def test_commit_section_raises_and_does_not_persist_a_section_when_report_id_is_nonexistent(tmp_path):
+    """Test that commit_section with nonexistent report_id raises ValueError and does NOT persist an orphaned section."""
+    db = create_db(str(tmp_path / "test.db"))
+
+    # Count sections before
+    count_before = db.execute("SELECT COUNT(*) FROM report_sections").fetchone()[0]
+
+    # Try to commit a section to a nonexistent report
+    import pytest
+    with pytest.raises(ValueError, match="Report nonexistent-report-id not found"):
+        commit_section(
+            db,
+            actor="analyst-1",
+            report_id="nonexistent-report-id",
+            section_type="investment_thesis",
+            content="some content",
+            claim_ids=["claim-1"],
+        )
+
+    # Count sections after - should be the same (no orphaned section created)
+    count_after = db.execute("SELECT COUNT(*) FROM report_sections").fetchone()[0]
+    assert count_before == count_after, f"Expected no section to be created, but count increased from {count_before} to {count_after}"
+
+
+def test_commit_section_raises_when_existing_section_id_does_not_belong_to_report_id(tmp_path):
+    """Test that commit_section raises ValueError when existing_section_id belongs to a different report."""
+    db = create_db(str(tmp_path / "test.db"))
+
+    # Create two separate reports
+    report1 = create_report(db, "report-1")
+    report2 = create_report(db, "report-2")
+
+    # Commit a section to the first report
+    section = commit_section(
+        db,
+        actor="analyst-1",
+        report_id=report1.id,
+        section_type="investment_thesis",
+        content="v1 text",
+        claim_ids=["claim-1"],
+    )
+
+    # Try to version that section as if it belonged to report2
+    import pytest
+    with pytest.raises(ValueError, match=f"Section {section.id} does not belong to report {report2.id}"):
+        commit_section(
+            db,
+            actor="analyst-1",
+            report_id=report2.id,
+            section_type="investment_thesis",
+            content="v2 text",
+            claim_ids=["claim-1"],
+            existing_section_id=section.id,
+        )
