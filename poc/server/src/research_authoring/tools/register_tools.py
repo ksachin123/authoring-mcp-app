@@ -18,7 +18,20 @@ from research_authoring.tools.assemble_report import assemble_report
 from research_authoring.tools.export_report import export_report_to_markdown
 
 
-_WIDGET_OUTPUT_TEMPLATE = {"openai/outputTemplate": "ui://widget/report-workspace.html"}
+_WIDGET_URI = "ui://widget/report-workspace.html"
+
+# Both the current MCP Apps standard key (`ui.resourceUri`) and the older
+# ChatGPT-specific `openai/outputTemplate` are set together: live logging
+# showed ChatGPT receiving `openai/outputTemplate` correctly on every
+# run_eval_tool/approve_artefact_tool call yet never once calling
+# resources/read for the widget across a whole session -- OpenAI's current
+# Apps SDK docs describe `ui.resourceUri` (plus a matching mimeType on the
+# resource itself, see server.py) as what widget recognition actually keys
+# off today, with `openai/outputTemplate` kept only as a compatibility alias.
+_WIDGET_META = {
+    "ui": {"resourceUri": _WIDGET_URI},
+    "openai/outputTemplate": _WIDGET_URI,
+}
 
 
 def _widget_result(structured_content: dict[str, Any], summary_text: str) -> types.CallToolResult:
@@ -39,7 +52,7 @@ def _widget_result(structured_content: dict[str, Any], summary_text: str) -> typ
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=summary_text)],
         structuredContent=structured_content,
-        **{"_meta": _WIDGET_OUTPUT_TEMPLATE},
+        **{"_meta": _WIDGET_META},
     )
 
 
@@ -103,7 +116,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
 
     @mcp.tool(
         description="Run the groundedness eval gate on an artefact before it can be approved.",
-        meta=_WIDGET_OUTPUT_TEMPLATE,
+        meta=_WIDGET_META,
     )
     @trace_tool_call
     def run_eval_tool(actor: str, artefact_id: str) -> types.CallToolResult:
@@ -116,7 +129,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
 
     @mcp.tool(
         description="Human approval gate: approve or reject a pending_approval artefact.",
-        meta=_WIDGET_OUTPUT_TEMPLATE,
+        meta=_WIDGET_META,
     )
     @trace_tool_call
     def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> types.CallToolResult:

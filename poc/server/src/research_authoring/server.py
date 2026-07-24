@@ -33,9 +33,7 @@ logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 # bare `@mcp.resource("ui://widget/report-workspace.html")` decorator with no
 # extra kwargs. The installed mcp SDK (1.28.1) `FastMCP.resource()` decorator
 # does accept `mime_type` and `meta` kwargs (see
-# .venv/lib/python*/site-packages/mcp/server/fastmcp/server.py, ~line 534), so
-# we pass `mime_type="text/html+skybridge"` here per the Apps SDK convention
-# for fullscreen widget resources.
+# .venv/lib/python*/site-packages/mcp/server/fastmcp/server.py, ~line 534).
 #
 # The built `dist/index.html` references its script as the relative
 # "./bundle.js" -- resolved live against ChatGPT and confirmed broken: `ui://`
@@ -48,10 +46,20 @@ logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 # needed by the widget itself and is kept only as a standalone way to check
 # the built bundle is present and served correctly.
 #
-# `run_eval_tool` and `approve_artefact_tool` declare
-# `_meta={"openai/outputTemplate": "ui://widget/report-workspace.html"}` in
-# `register_tools.py` so ChatGPT knows to render this resource after either
-# tool call -- see register_tools.py's `_WIDGET_OUTPUT_TEMPLATE`.
+# mime_type was originally "text/html+skybridge" (the older ChatGPT-specific
+# convention). Live logging (added separately) showed ChatGPT calling
+# run_eval_tool/approve_artefact_tool successfully with correct
+# `_meta["openai/outputTemplate"]` on every call, but NEVER once calling
+# resources/read for this resource across an entire session -- i.e. ChatGPT
+# wasn't failing to fetch the widget, it was never attempting to. OpenAI's
+# current Apps SDK docs (openai/apps-sdk "Add UI to your MCP server") specify
+# the newer MCP Apps standard mimeType "text/html;profile=mcp-app" as
+# "required for widget recognition", plus `_meta.ui.resourceUri` (not just
+# `openai/outputTemplate`) linking the tool to the resource, and a `_meta.ui`
+# block on the resource itself. Switched to that mimeType and meta shape
+# here; `openai/outputTemplate` is kept alongside it on the tool side (see
+# register_tools.py's `_WIDGET_META`) since OpenAI's docs describe it as a
+# still-recognized compatibility alias, not something to drop.
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "..", "widget", "dist")
 
 for _asset in ("index.html", "bundle.js"):
@@ -62,7 +70,11 @@ for _asset in ("index.html", "bundle.js"):
         logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
 
 
-@mcp.resource("ui://widget/report-workspace.html", mime_type="text/html+skybridge")
+@mcp.resource(
+    "ui://widget/report-workspace.html",
+    mime_type="text/html;profile=mcp-app",
+    meta={"ui": {"prefersBorder": True}},
+)
 def report_workspace_widget() -> str:
     logger.info("resource read: ui://widget/report-workspace.html")
     with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
