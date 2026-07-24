@@ -1,15 +1,21 @@
+import logging
 import os
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import FileResponse, Response
 from research_authoring.db.connection import create_db
+from research_authoring.logging_utils import configure_logging
 from research_authoring.tools.register_tools import register_tools
 
 load_dotenv()
+configure_logging()
+logger = logging.getLogger("research_authoring.server")
 
-os.makedirs(os.path.dirname(os.environ.get("DB_PATH", "./data/poc.db")) or ".", exist_ok=True)
-db = create_db(os.environ.get("DB_PATH", "./data/poc.db"))
+db_path = os.environ.get("DB_PATH", "./data/poc.db")
+os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+db = create_db(db_path)
+logger.info("db ready path=%s", db_path)
 
 # NOTE: deviation from the task brief. The installed mcp SDK's FastMCP.run()
 # only accepts a `transport` argument (and `mount_path`) -- host/port are not
@@ -18,8 +24,10 @@ db = create_db(os.environ.get("DB_PATH", "./data/poc.db"))
 # ASGI app. Render (and most PaaS hosts) require binding 0.0.0.0 and the port
 # they inject via the PORT env var, not localhost/a hardcoded port. See Task 18
 # for the full Render deployment configuration.
-mcp = FastMCP("research-authoring-poc", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+_port = int(os.environ.get("PORT", 8000))
+mcp = FastMCP("research-authoring-poc", host="0.0.0.0", port=_port)
 register_tools(mcp, db)
+logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 
 # NOTE: deviation from the task brief for Step 9. The brief's example uses a
 # bare `@mcp.resource("ui://widget/report-workspace.html")` decorator with no
@@ -45,9 +53,17 @@ register_tools(mcp, db)
 # tool call -- see register_tools.py's `_WIDGET_OUTPUT_TEMPLATE`.
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "..", "widget", "dist")
 
+for _asset in ("index.html", "bundle.js"):
+    _asset_path = os.path.join(_WIDGET_DIST, _asset)
+    if os.path.exists(_asset_path):
+        logger.info("widget asset found: %s", _asset_path)
+    else:
+        logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
+
 
 @mcp.resource("ui://widget/report-workspace.html", mime_type="text/html+skybridge")
 def report_workspace_widget() -> str:
+    logger.info("resource read: ui://widget/report-workspace.html")
     with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
         return f.read()
 
@@ -56,14 +72,18 @@ def report_workspace_widget() -> str:
 async def report_workspace_widget_bundle(request: Request) -> Response:
     bundle_path = os.path.join(_WIDGET_DIST, "bundle.js")
     if not os.path.exists(bundle_path):
+        logger.warning("GET /widget/bundle.js -> 404 (not built at %s)", bundle_path)
         return Response("widget bundle not built", status_code=404)
+    logger.info("GET /widget/bundle.js -> 200")
     return FileResponse(bundle_path, media_type="application/javascript")
 
 
 @mcp.custom_route("/health", methods=["GET"])
 async def healthz(request: Request) -> Response:
+    logger.debug("GET /health -> 200")
     return Response("ok", status_code=200)
 
 
 if __name__ == "__main__":
+    logger.info("starting research-authoring-poc MCP server on 0.0.0.0:%d", _port)
     mcp.run(transport="streamable-http")

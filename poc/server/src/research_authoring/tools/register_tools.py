@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any, Optional
 from mcp import types
 from mcp.server.fastmcp import FastMCP
+from research_authoring.logging_utils import trace_tool_call
 from research_authoring.db.artefact_repository import get_latest_artefact
 from research_authoring.tools.ingest_document import ingest_document
 from research_authoring.tools.ingest_connector_result import ingest_connector_result
@@ -44,6 +45,7 @@ def _widget_result(structured_content: dict[str, Any], summary_text: str) -> typ
 
 def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
     @mcp.tool(description="Register an analyst-uploaded document as a Source.")
+    @trace_tool_call
     def ingest_document_tool(
         actor: str, context: str, raw_content_ref: str, external_url: Optional[str] = None
     ) -> str:
@@ -60,6 +62,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
             "tool(s), before synthesizing any artefact from the result."
         )
     )
+    @trace_tool_call
     def ingest_connector_result_tool(
         actor: str, connector_name: str, context: str, raw_content_ref: str
     ) -> str:
@@ -77,6 +80,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
             "until it has been ingested this way."
         )
     )
+    @trace_tool_call
     def ingest_web_result_tool(
         actor: str, context: str, raw_content_ref: str, external_url: str
     ) -> str:
@@ -87,6 +91,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         return json.dumps(asdict(source))
 
     @mcp.tool(description="Draft an intermediate artefact from a source, decomposed into cited claims.")
+    @trace_tool_call
     def synthesize_artefact_tool(actor: str, type: str, generated_text: str, source_id: str) -> str:
         from research_authoring.db.source_repository import get_source
 
@@ -100,6 +105,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         description="Run the groundedness eval gate on an artefact before it can be approved.",
         meta=_WIDGET_OUTPUT_TEMPLATE,
     )
+    @trace_tool_call
     def run_eval_tool(actor: str, artefact_id: str) -> types.CallToolResult:
         artefact, eval_run_id = run_eval(db, actor=actor, artefact_id=artefact_id)
         structured = {"artefact": asdict(artefact), "eval_run_id": eval_run_id}
@@ -112,6 +118,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         description="Human approval gate: approve or reject a pending_approval artefact.",
         meta=_WIDGET_OUTPUT_TEMPLATE,
     )
+    @trace_tool_call
     def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> types.CallToolResult:
         artefact = approve_artefact(db, actor=actor, artefact_id=artefact_id, decision=decision)
         return _widget_result(
@@ -122,6 +129,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
     @mcp.tool(
         description="Assemble a draft section from approved artefacts (not persisted until commit_section)."
     )
+    @trace_tool_call
     def draft_section_tool(report_id: str, section_type: str, approved_artefact_ids: list[str]) -> str:
         artefacts = []
         for artefact_id in approved_artefact_ids:
@@ -133,6 +141,7 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         return json.dumps(draft)
 
     @mcp.tool(description="Commit analyst-refined section prose into the governed report document.")
+    @trace_tool_call
     def commit_section_tool(
         actor: str,
         report_id: str,
@@ -150,11 +159,13 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         return json.dumps(asdict(section))
 
     @mcp.tool(description="Validate and order committed sections into a ready-for-export report.")
+    @trace_tool_call
     def assemble_report_tool(actor: str, report_id: str, section_order: list[str]) -> str:
         report = assemble_report(db, actor=actor, report_id=report_id, section_order=section_order)
         return json.dumps(asdict(report))
 
     @mcp.tool(description="Export a ready-for-export report to Markdown with resolved citations.")
+    @trace_tool_call
     def export_report_tool(actor: str, report_id: str, template_title: str) -> str:
         markdown, _report = export_report_to_markdown(
             db, actor=actor, report_id=report_id, template_title=template_title
