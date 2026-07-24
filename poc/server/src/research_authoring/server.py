@@ -35,17 +35,18 @@ logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 # does accept `mime_type` and `meta` kwargs (see
 # .venv/lib/python*/site-packages/mcp/server/fastmcp/server.py, ~line 534), so
 # we pass `mime_type="text/html+skybridge"` here per the Apps SDK convention
-# for fullscreen widget resources. There is no dedicated API for serving a
-# widget's supporting static assets (e.g. bundle.js) as part of the resource
-# registration itself -- FastMCP resources are single documents read via
-# `resources/read`, not a static file mount. bundle.js is instead served via
-# `@mcp.custom_route(...)`, which registers an arbitrary Starlette HTTP route
-# on the same ASGI app (see same file, ~line 705) at "/widget/bundle.js". The
-# built `dist/index.html` (per the brief's exact Step 7 content) references
-# its script as the relative "./bundle.js", which resolves correctly when the
-# file is served directly from this route's sibling path; whether ChatGPT's
-# renderer needs an absolute URL instead when it loads the `ui://` resource
-# is unverified until Task 17's live ChatGPT pass.
+# for fullscreen widget resources.
+#
+# The built `dist/index.html` references its script as the relative
+# "./bundle.js" -- resolved live against ChatGPT and confirmed broken: `ui://`
+# is a custom scheme with no origin for the sandboxed iframe to resolve a
+# relative URL against, so the widget's JS silently failed to load (React
+# never mounted, blank widget) even though the tool call, its `_meta`, and
+# this resource fetch all succeeded. `report_workspace_widget()` below
+# inlines bundle.js directly into the served HTML instead, so the resource is
+# fully self-contained -- the "/widget/bundle.js" custom_route is no longer
+# needed by the widget itself and is kept only as a standalone way to check
+# the built bundle is present and served correctly.
 #
 # `run_eval_tool` and `approve_artefact_tool` declare
 # `_meta={"openai/outputTemplate": "ui://widget/report-workspace.html"}` in
@@ -65,7 +66,22 @@ for _asset in ("index.html", "bundle.js"):
 def report_workspace_widget() -> str:
     logger.info("resource read: ui://widget/report-workspace.html")
     with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
-        return f.read()
+        html = f.read()
+    with open(os.path.join(_WIDGET_DIST, "bundle.js")) as f:
+        bundle_js = f.read()
+    # `ui://...` is a custom scheme with no origin for ChatGPT's sandboxed
+    # iframe to resolve a relative `<script src="./bundle.js">` against, so
+    # the script silently fails to load -- React never mounts and the widget
+    # renders blank -- even though the tool call, its `_meta`, and this
+    # resource fetch all succeed (confirmed live against the deployed
+    # server: the tool call and resource read both work, but the widget
+    # never visibly renders). Inline the bundle directly instead, matching
+    # the working reference app in ../mcp-app, which ships a single
+    # self-contained widget file with no external script fetch at all.
+    # Escape any literal "</script" inside the bundle so it can't
+    # prematurely close this HTML <script> tag.
+    inline_script = f'<script type="module">{bundle_js.replace("</script", "<\\/script")}</script>'
+    return html.replace('<script type="module" src="./bundle.js"></script>', inline_script)
 
 
 @mcp.custom_route("/widget/bundle.js", methods=["GET"])
