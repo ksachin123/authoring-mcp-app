@@ -39,14 +39,10 @@ register_tools(mcp, db)
 # renderer needs an absolute URL instead when it loads the `ui://` resource
 # is unverified until Task 17's live ChatGPT pass.
 #
-# We deliberately do NOT set `_meta`/`openai/outputTemplate` on
-# `run_eval_tool` / `approve_artefact_tool` in this task -- doing so would
-# require editing the `@mcp.tool(...)` decorators in
-# `research_authoring/tools/register_tools.py`, which is out of scope here
-# (Task 16 instructions restrict changes to `server.py` only). That tool-meta
-# wiring, and verifying the exact `openai/outputTemplate` key/value shape
-# ChatGPT expects, is left for Task 17's live ChatGPT Developer Mode pass, per
-# this task brief's own note.
+# `run_eval_tool` and `approve_artefact_tool` declare
+# `_meta={"openai/outputTemplate": "ui://widget/report-workspace.html"}` in
+# `register_tools.py` so ChatGPT knows to render this resource after either
+# tool call -- see register_tools.py's `_WIDGET_OUTPUT_TEMPLATE`.
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "..", "widget", "dist")
 
 

@@ -15,6 +15,9 @@ from research_authoring.tools.assemble_report import assemble_report
 from research_authoring.tools.export_report import export_report_to_markdown
 
 
+_WIDGET_OUTPUT_TEMPLATE = {"openai/outputTemplate": "ui://widget/report-workspace.html"}
+
+
 def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
     @mcp.tool(description="Register an analyst-uploaded document as a Source.")
     def ingest_document_tool(
@@ -52,12 +55,18 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         artefact = synthesize_artefact(db, actor=actor, type=type, generated_text=generated_text, source=source)
         return json.dumps(asdict(artefact))
 
-    @mcp.tool(description="Run the groundedness eval gate on an artefact before it can be approved.")
+    @mcp.tool(
+        description="Run the groundedness eval gate on an artefact before it can be approved.",
+        meta=_WIDGET_OUTPUT_TEMPLATE,
+    )
     def run_eval_tool(actor: str, artefact_id: str) -> str:
         artefact, eval_run_id = run_eval(db, actor=actor, artefact_id=artefact_id)
         return json.dumps({"artefact": asdict(artefact), "eval_run_id": eval_run_id})
 
-    @mcp.tool(description="Human approval gate: approve or reject a pending_approval artefact.")
+    @mcp.tool(
+        description="Human approval gate: approve or reject a pending_approval artefact.",
+        meta=_WIDGET_OUTPUT_TEMPLATE,
+    )
     def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> str:
         artefact = approve_artefact(db, actor=actor, artefact_id=artefact_id, decision=decision)
         return json.dumps(asdict(artefact))
