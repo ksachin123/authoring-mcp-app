@@ -83,11 +83,21 @@ for _asset in ("index.html", "bundle.js"):
 _WIDGET_DEBUG_MINIMAL = True
 _MINIMAL_TEST_WIDGET_HTML = (
     '<!doctype html><html><head><meta charset="utf-8">'
-    "<title>Minimal Test Widget</title></head>"
+    "<title>Minimal Test Widget</title>"
+    # Visible background/border: if this box doesn't show up, we're not
+    # actually looking at a styled iframe at all -- the content is being
+    # dumped inline into the chat as if it were plain text.
+    "<style>body{background:#dbeeff;border:4px solid #0055ff;margin:0;"
+    "padding:14px;font-family:sans-serif;font-size:14px;}</style>"
+    "</head>"
     '<body><div id="root">before-script ran</div>'
     "<script>"
+    "var hasBridge = typeof window.openai !== 'undefined';"
+    "var bridgeKeys = hasBridge ? Object.keys(window.openai).join(', ') : 'n/a';"
     "document.getElementById('root').textContent = "
-    "'minimal widget JS executed at ' + new Date().toISOString();"
+    "'JS executed at ' + new Date().toISOString() + "
+    "' | window.openai present: ' + hasBridge + "
+    "' | bridge keys: ' + bridgeKeys;"
     "</script></body></html>"
 )
 
