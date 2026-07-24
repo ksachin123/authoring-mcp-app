@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: research-authoring-poc
+    runtime: python
+    plan: free
+    rootDir: poc/server
+    buildCommand: bash build.sh
+    startCommand: python -m research_authoring.server
+    envVars:
+      - key: DB_PATH
+        value: ./data/poc.db
