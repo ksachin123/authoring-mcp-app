@@ -1,7 +1,19 @@
 # Skill: Draft an Equity Research Report Section
 
 **When to use:** The analyst asks to research a company, build an investment thesis,
-or draft/refine a section of a sell-side equity research report.
+or draft/refine a section of a sell-side equity research report — including when they
+attach a document (e.g. a 10-Q, earnings release, or PDF) and ask you to analyze it or
+draft a thesis point from it. Attaching a file does not change this: any attached
+document is source material for this Skill's pipeline, not something to read and
+summarize on your own.
+
+**Do not** answer directly from an attached file, connector output, or web search using
+your own reading/analysis, even though you are capable of it and it would be faster.
+This Skill exists specifically to route that content through governed ingestion,
+citation, and an eval/approval gate before it becomes analysis the analyst sees. Skipping
+the tools below and answering natively defeats the entire point of this app — every
+thesis point, data extract, or comparison table must originate from `synthesize_artefact_tool`
+and pass through `run_eval_tool`, not from your own summary of the raw material.
 
 **Steps to follow, in order:**
 1. If the analyst hasn't supplied source material yet, ask whether to use an uploaded
