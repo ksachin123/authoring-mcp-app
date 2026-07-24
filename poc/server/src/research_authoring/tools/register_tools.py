@@ -1,7 +1,8 @@
 import json
 import sqlite3
 from dataclasses import asdict
-from typing import Optional
+from typing import Any, Optional
+from mcp import types
 from mcp.server.fastmcp import FastMCP
 from research_authoring.db.artefact_repository import get_latest_artefact
 from research_authoring.tools.ingest_document import ingest_document
@@ -16,6 +17,28 @@ from research_authoring.tools.export_report import export_report_to_markdown
 
 
 _WIDGET_OUTPUT_TEMPLATE = {"openai/outputTemplate": "ui://widget/report-workspace.html"}
+
+
+def _widget_result(structured_content: dict[str, Any], summary_text: str) -> types.CallToolResult:
+    # ChatGPT's Apps SDK client decides whether to render the widget based on
+    # `_meta` on the *per-call* result, not just the tool's static definition
+    # (confirmed against the working reference app in ../mcp-app, which sets
+    # it in both places). The installed mcp SDK's default @mcp.tool return
+    # handling (plain str/dict) never attaches `_meta` to the CallToolResult,
+    # so tools that must trigger the widget return this object directly.
+    # CallToolResult.meta is a pydantic field aliased to the wire key `_meta`
+    # (see mcp.types.Result), and mcp's model config does not set
+    # `populate_by_name=True`. Constructing with the keyword `meta=` (the
+    # field name, not its alias) silently misses the real field and -- since
+    # the model allows extra attributes -- creates a bogus top-level `meta`
+    # key instead of `_meta` on the wire, which ChatGPT's Apps SDK client
+    # does not recognize. The alias must be passed explicitly via dict
+    # unpacking, since `_meta` is not a valid Python keyword argument name.
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=summary_text)],
+        structuredContent=structured_content,
+        **{"_meta": _WIDGET_OUTPUT_TEMPLATE},
+    )
 
 
 def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
@@ -59,17 +82,24 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         description="Run the groundedness eval gate on an artefact before it can be approved.",
         meta=_WIDGET_OUTPUT_TEMPLATE,
     )
-    def run_eval_tool(actor: str, artefact_id: str) -> str:
+    def run_eval_tool(actor: str, artefact_id: str) -> types.CallToolResult:
         artefact, eval_run_id = run_eval(db, actor=actor, artefact_id=artefact_id)
-        return json.dumps({"artefact": asdict(artefact), "eval_run_id": eval_run_id})
+        structured = {"artefact": asdict(artefact), "eval_run_id": eval_run_id}
+        return _widget_result(
+            structured,
+            f"Eval run {eval_run_id} completed for artefact {artefact_id}: status={artefact.status}.",
+        )
 
     @mcp.tool(
         description="Human approval gate: approve or reject a pending_approval artefact.",
         meta=_WIDGET_OUTPUT_TEMPLATE,
     )
-    def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> str:
+    def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> types.CallToolResult:
         artefact = approve_artefact(db, actor=actor, artefact_id=artefact_id, decision=decision)
-        return json.dumps(asdict(artefact))
+        return _widget_result(
+            {"artefact": asdict(artefact)},
+            f"Artefact {artefact_id} {artefact.status}.",
+        )
 
     @mcp.tool(
         description="Assemble a draft section from approved artefacts (not persisted until commit_section)."
