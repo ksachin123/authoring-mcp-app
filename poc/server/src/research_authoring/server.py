@@ -64,5 +64,10 @@ async def report_workspace_widget_bundle(request: Request) -> Response:
     return FileResponse(bundle_path, media_type="application/javascript")
 
 
+@mcp.custom_route("/health", methods=["GET"])
+async def healthz(request: Request) -> Response:
+    return Response("ok", status_code=200)
+
+
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")

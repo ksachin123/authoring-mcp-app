@@ -6,6 +6,7 @@ services:
     rootDir: poc/server
     buildCommand: bash build.sh
     startCommand: python -m research_authoring.server
+    healthCheckPath: /health
     envVars:
       - key: DB_PATH
         value: ./data/poc.db

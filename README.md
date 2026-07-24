@@ -61,7 +61,23 @@ mkdir -p data
 PORT=8000 .venv/bin/python -m research_authoring.server
 ```
 
-The MCP server listens on `http://0.0.0.0:8000`. Point ChatGPT Developer Mode at this URL (or your deployed URL) to register the app — see [Apps SDK docs](https://developers.openai.com/apps-sdk/build/chatgpt-ui) for the current registration flow.
+The MCP server listens on `http://0.0.0.0:8000`, exposing:
+
+- **`/mcp`** — the MCP endpoint itself (streamable-HTTP/JSON-RPC). Point ChatGPT Developer Mode (or any MCP client) at `http://localhost:8000/mcp` (or your deployed URL, e.g. `https://<your-render-service>.onrender.com/mcp`) to register the app — see [Apps SDK docs](https://developers.openai.com/apps-sdk/build/chatgpt-ui) for the current registration flow.
+- **`/health`** — plain HTTP health check, returns `200 ok`. Used by Render's health monitor (`render.yaml`'s `healthCheckPath`); also handy for confirming the server is up: `curl http://localhost:8000/health`.
+- **`/widget/bundle.js`** — the built widget's JS bundle, served as a static asset and loaded internally by the `ui://widget/report-workspace.html` resource. Not something you need to reference directly.
+
+The widget UI itself isn't a separate URL — it's registered as the MCP resource `ui://widget/report-workspace.html`, which a client fetches via `resources/read` over the `/mcp` connection when a tool response references it.
+
+#### Testing the MCP server locally without ChatGPT
+
+Plain `curl` won't get you far against `/mcp` since it's a stateful JSON-RPC session. Use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) instead:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+Then point it at `http://localhost:8000/mcp` to list/call tools and resources, including rendering the widget, without needing ChatGPT Developer Mode.
 
 ### 4. Configure the Skill
 
