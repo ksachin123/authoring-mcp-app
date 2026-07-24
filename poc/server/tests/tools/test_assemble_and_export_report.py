@@ -53,6 +53,14 @@ def test_assemble_report_marks_ready_for_export_when_all_referenced_sections_are
     assert assembled.section_ids == [thesis_section.id, valuation_section.id]
 
 
+def test_assemble_report_raises_if_section_order_is_empty(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report, _thesis_section, _valuation_section, _source, _claim = _setup_two_section_report(db)
+
+    with pytest.raises(ValueError, match="section_order must not be empty"):
+        assemble_report(db, actor="analyst-1", report_id=report.id, section_order=[])
+
+
 def test_assemble_report_raises_if_a_referenced_section_is_not_committed(tmp_path):
     db = create_db(str(tmp_path / "test.db"))
     report, thesis_section, _valuation_section, _source, _claim = _setup_two_section_report(db)
@@ -84,3 +92,23 @@ def test_export_report_to_markdown_renders_sections_in_order_with_a_footnote_cit
     assert "[1]: epsEstimateFY26: 7.42" in markdown
     assert exported.status == "exported"
     assert get_latest_report(db, report.id).status == "exported"
+
+
+def test_export_report_to_markdown_raises_on_a_dangling_claim_reference(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
+    section = create_report_section(
+        db, report_id=report.id, section_type="investment_thesis",
+        content="Some text.", claim_ids=["nonexistent-claim"],
+        status="committed", committed_by="analyst-1", committed_at="2026-07-24T12:05:00Z",
+    )
+    create_report_version(db, report.id, section_ids=[section.id])
+    assemble_report(db, actor="analyst-1", report_id=report.id, section_order=[section.id])
+
+    with pytest.raises(
+        ValueError,
+        match=f"Claim nonexistent-claim referenced by section {section.id} not found",
+    ):
+        export_report_to_markdown(
+            db, actor="analyst-1", report_id=report.id, template_title="AAPL — Initiation of Coverage"
+        )

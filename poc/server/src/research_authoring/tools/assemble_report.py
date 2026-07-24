@@ -15,6 +15,9 @@ def assemble_report(
     if report is None:
         raise ValueError(f"Report {report_id} not found")
 
+    if not section_order:
+        raise ValueError("section_order must not be empty")
+
     for section_id in section_order:
         section = get_latest_report_section(db, section_id)
         if section is None or section.status != "committed":

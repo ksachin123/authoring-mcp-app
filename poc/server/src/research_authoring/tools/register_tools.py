@@ -82,11 +82,13 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         section_type: str,
         content: str,
         claim_ids: list[str],
+        approved_artefact_ids: list[str],
         existing_section_id: Optional[str] = None,
     ) -> str:
         section = commit_section(
             db, actor=actor, report_id=report_id, section_type=section_type, content=content,
-            claim_ids=claim_ids, existing_section_id=existing_section_id,
+            claim_ids=claim_ids, approved_artefact_ids=approved_artefact_ids,
+            existing_section_id=existing_section_id,
         )
         return json.dumps(asdict(section))
 

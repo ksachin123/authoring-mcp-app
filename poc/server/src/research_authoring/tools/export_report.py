@@ -41,7 +41,7 @@ def export_report_to_markdown(
         for claim_id in section.claim_ids:
             claim = get_claim(db, claim_id)
             if claim is None:
-                continue
+                raise ValueError(f"Claim {claim_id} referenced by section {section.id} not found")
             content += f" [{footnote_index}]"
             footnotes.append(f"[{footnote_index}]: {claim.source_excerpt}")
             footnote_index += 1

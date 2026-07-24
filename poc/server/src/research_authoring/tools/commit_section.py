@@ -9,6 +9,7 @@ from research_authoring.db.report_repository import (
     create_report_version,
 )
 from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.artefact_repository import get_latest_artefact
 from research_authoring.db.types import ReportSection
 
 
@@ -20,9 +21,26 @@ def commit_section(
     section_type: str,
     content: str,
     claim_ids: list[str],
+    approved_artefact_ids: list[str],
     existing_section_id: Optional[str] = None,
 ) -> ReportSection:
     now = datetime.now(timezone.utc).isoformat()
+
+    # Enforce the approval gate at commit_section (not only at ingest), so a
+    # claim can't be laundered into a committed section by carrying it forward
+    # from a draft/rejected artefact or a typo'd claim id.
+    valid_claim_ids: set[str] = set()
+    for artefact_id in approved_artefact_ids:
+        artefact = get_latest_artefact(db, artefact_id)
+        if artefact is None:
+            raise ValueError(f"Artefact {artefact_id} not found")
+        if artefact.status != "approved":
+            raise ValueError(f"Artefact {artefact_id} is not approved (status: {artefact.status})")
+        valid_claim_ids.update(artefact.claim_ids)
+
+    for claim_id in claim_ids:
+        if claim_id not in valid_claim_ids:
+            raise ValueError(f"Claim {claim_id} is not part of any approved artefact in approved_artefact_ids")
 
     if existing_section_id:
         # Validate that the section belongs to the passed report_id

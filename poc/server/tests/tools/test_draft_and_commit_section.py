@@ -1,3 +1,4 @@
+import pytest
 from research_authoring.db.connection import create_db
 from research_authoring.db.artefact_repository import create_artefact
 from research_authoring.db.report_repository import (
@@ -8,6 +9,13 @@ from research_authoring.db.report_repository import (
 from research_authoring.db.audit_repository import get_audit_trail_for_target
 from research_authoring.tools.draft_section import draft_section
 from research_authoring.tools.commit_section import commit_section
+
+
+def _make_approved_artefact(db, claim_ids):
+    return create_artefact(
+        db, type="thesis_point", content="x", claim_ids=claim_ids, status="approved",
+        approved_by="analyst-1", approved_at="2026-07-24T12:00:00Z",
+    )
 
 
 def test_draft_section_assembles_draft_content_and_claim_ids_from_approved_artefacts(tmp_path):
@@ -34,6 +42,7 @@ def test_draft_section_assembles_draft_content_and_claim_ids_from_approved_artef
 def test_commit_section_creates_a_new_section_and_appends_it_to_the_report_on_first_commit(tmp_path):
     db = create_db(str(tmp_path / "test.db"))
     report = create_report(db, "equity-initiation-v1")
+    artefact = _make_approved_artefact(db, ["claim-1"])
 
     section = commit_section(
         db,
@@ -42,6 +51,7 @@ def test_commit_section_creates_a_new_section_and_appends_it_to_the_report_on_fi
         section_type="investment_thesis",
         content="Margin expansion driven by pricing power.",
         claim_ids=["claim-1"],
+        approved_artefact_ids=[artefact.id],
     )
 
     assert section.status == "committed"
@@ -57,15 +67,16 @@ def test_commit_section_creates_a_new_section_and_appends_it_to_the_report_on_fi
 def test_commit_section_versions_an_existing_section_without_duplicating_the_report_section_list(tmp_path):
     db = create_db(str(tmp_path / "test.db"))
     report = create_report(db, "equity-initiation-v1")
+    artefact = _make_approved_artefact(db, ["claim-1", "claim-2"])
     first = commit_section(
         db, actor="analyst-1", report_id=report.id, section_type="investment_thesis",
-        content="v1 text", claim_ids=["claim-1"],
+        content="v1 text", claim_ids=["claim-1"], approved_artefact_ids=[artefact.id],
     )
 
     second = commit_section(
         db, actor="analyst-1", report_id=report.id, section_type="investment_thesis",
         content="v2 text, refined", claim_ids=["claim-1", "claim-2"],
-        existing_section_id=first.id,
+        existing_section_id=first.id, approved_artefact_ids=[artefact.id],
     )
 
     assert second.id == first.id
@@ -79,6 +90,7 @@ def test_commit_section_versions_an_existing_section_without_duplicating_the_rep
 def test_commit_section_raises_and_does_not_persist_a_section_when_report_id_is_nonexistent(tmp_path):
     """Test that commit_section with nonexistent report_id raises ValueError and does NOT persist an orphaned section."""
     db = create_db(str(tmp_path / "test.db"))
+    artefact = _make_approved_artefact(db, ["claim-1"])
 
     # Count sections before
     count_before = db.execute("SELECT COUNT(*) FROM report_sections").fetchone()[0]
@@ -93,6 +105,7 @@ def test_commit_section_raises_and_does_not_persist_a_section_when_report_id_is_
             section_type="investment_thesis",
             content="some content",
             claim_ids=["claim-1"],
+            approved_artefact_ids=[artefact.id],
         )
 
     # Count sections after - should be the same (no orphaned section created)
@@ -107,6 +120,7 @@ def test_commit_section_raises_when_existing_section_id_does_not_belong_to_repor
     # Create two separate reports
     report1 = create_report(db, "report-1")
     report2 = create_report(db, "report-2")
+    artefact = _make_approved_artefact(db, ["claim-1"])
 
     # Commit a section to the first report
     section = commit_section(
@@ -116,6 +130,7 @@ def test_commit_section_raises_when_existing_section_id_does_not_belong_to_repor
         section_type="investment_thesis",
         content="v1 text",
         claim_ids=["claim-1"],
+        approved_artefact_ids=[artefact.id],
     )
 
     # Try to version that section as if it belonged to report2
@@ -129,4 +144,64 @@ def test_commit_section_raises_when_existing_section_id_does_not_belong_to_repor
             content="v2 text",
             claim_ids=["claim-1"],
             existing_section_id=section.id,
+            approved_artefact_ids=[artefact.id],
+        )
+
+
+def test_commit_section_raises_when_an_approved_artefact_id_does_not_exist(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
+
+    with pytest.raises(ValueError, match="Artefact nonexistent-artefact not found"):
+        commit_section(
+            db,
+            actor="analyst-1",
+            report_id=report.id,
+            section_type="investment_thesis",
+            content="some content",
+            claim_ids=["claim-1"],
+            approved_artefact_ids=["nonexistent-artefact"],
+        )
+
+
+def test_commit_section_raises_when_an_artefact_id_is_not_approved(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
+    draft_artefact = create_artefact(
+        db, type="thesis_point", content="x", claim_ids=["claim-1"], status="draft",
+        approved_by=None, approved_at=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=f"Artefact {draft_artefact.id} is not approved \\(status: draft\\)",
+    ):
+        commit_section(
+            db,
+            actor="analyst-1",
+            report_id=report.id,
+            section_type="investment_thesis",
+            content="some content",
+            claim_ids=["claim-1"],
+            approved_artefact_ids=[draft_artefact.id],
+        )
+
+
+def test_commit_section_raises_when_a_claim_id_does_not_belong_to_any_approved_artefact(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
+    artefact = _make_approved_artefact(db, ["claim-1"])
+
+    with pytest.raises(
+        ValueError,
+        match="Claim claim-typo is not part of any approved artefact in approved_artefact_ids",
+    ):
+        commit_section(
+            db,
+            actor="analyst-1",
+            report_id=report.id,
+            section_type="investment_thesis",
+            content="some content",
+            claim_ids=["claim-typo"],
+            approved_artefact_ids=[artefact.id],
         )

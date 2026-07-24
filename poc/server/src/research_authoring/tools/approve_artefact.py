@@ -9,19 +9,23 @@ from research_authoring.db.types import Artefact
 def approve_artefact(
     db: sqlite3.Connection, *, actor: str, artefact_id: str, decision: str
 ) -> Artefact:
+    if decision not in ("approve", "reject"):
+        raise ValueError(f"decision must be 'approve' or 'reject', got {decision!r}")
+
     current = get_latest_artefact(db, artefact_id)
     if current is None:
         raise ValueError(f"Artefact {artefact_id} not found")
     if current.status != "pending_approval":
         raise ValueError("Artefact is not pending approval")
 
+    approved = decision == "approve"
     now = datetime.now(timezone.utc).isoformat()
     updated = create_artefact_version(
         db,
         current.id,
-        status="approved" if decision == "approve" else "rejected",
-        approved_by=actor,
-        approved_at=now,
+        status="approved" if approved else "rejected",
+        approved_by=actor if approved else current.approved_by,
+        approved_at=now if approved else current.approved_at,
     )
 
     write_audit_entry(

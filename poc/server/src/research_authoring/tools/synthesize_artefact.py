@@ -14,6 +14,12 @@ def synthesize_artefact(
     generated_text: str,
     source: Source,
 ) -> Artefact:
+    # POC limitation: raw_content_ref is often a pointer/URI (e.g.
+    # "factset://fundamentals/AAPL", "blob://uploads/x.pdf") rather than
+    # retrieved text, so the citation excerpts produced here are not yet real
+    # source text. A future iteration would need a dedicated content/excerpt
+    # field on the Source model for citations to resolve to actual retrieved
+    # text rather than a pointer.
     extracted = extract_claims(generated_text=generated_text, source_excerpt=source.raw_content_ref)
 
     claims = [

@@ -33,6 +33,16 @@ def test_rejects_the_artefact_when_decision_is_reject(tmp_path):
 
     rejected = approve_artefact(db, actor="analyst-1", artefact_id=pending.id, decision="reject")
     assert rejected.status == "rejected"
+    assert rejected.approved_by is None
+    assert rejected.approved_at is None
+
+
+def test_raises_when_decision_is_neither_approve_nor_reject(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    pending = _make_pending_artefact(db)
+
+    with pytest.raises(ValueError, match="decision must be 'approve' or 'reject', got 'maybe'"):
+        approve_artefact(db, actor="analyst-1", artefact_id=pending.id, decision="maybe")
 
 
 def test_raises_if_the_artefact_is_not_pending_approval(tmp_path):
