@@ -68,6 +68,11 @@ def get_latest_artefact(db: sqlite3.Connection, id: str) -> Optional[Artefact]:
 
 
 def create_artefact_version(db: sqlite3.Connection, id: str, **patch) -> Artefact:
+    allowed_fields = {"content", "claim_ids", "status", "approved_by", "approved_at"}
+    unknown_keys = set(patch.keys()) - allowed_fields
+    if unknown_keys:
+        raise ValueError(f"Unknown patch field(s): {sorted(unknown_keys)}")
+
     current = get_latest_artefact(db, id)
     if current is None:
         raise ValueError(f"Artefact {id} not found")

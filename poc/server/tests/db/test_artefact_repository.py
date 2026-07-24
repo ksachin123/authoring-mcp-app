@@ -1,3 +1,4 @@
+import pytest
 from research_authoring.db.connection import create_db
 from research_authoring.db.artefact_repository import (
     create_artefact,
@@ -32,4 +33,32 @@ def test_creates_version_1_and_a_subsequent_version_without_losing_history(tmp_p
         "SELECT * FROM artefacts WHERE id = ? AND version = 1", (v1.id,)
     ).fetchone()
     assert v1_row is not None
+    db.close()
+
+
+def test_create_artefact_version_raises_on_nonexistent_id(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+
+    with pytest.raises(ValueError, match="Artefact nonexistent-id not found"):
+        create_artefact_version(db, "nonexistent-id", status="approved")
+
+    db.close()
+
+
+def test_create_artefact_version_rejects_unknown_patch_keys(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+
+    artefact = create_artefact(
+        db,
+        type="thesis_point",
+        content="Initial content",
+        claim_ids=["claim-1"],
+        status="draft",
+        approved_by=None,
+        approved_at=None,
+    )
+
+    with pytest.raises(ValueError, match="Unknown patch field"):
+        create_artefact_version(db, artefact.id, staus="approved")
+
     db.close()
