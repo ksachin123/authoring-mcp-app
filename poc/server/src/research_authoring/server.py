@@ -77,7 +77,10 @@ for _asset in ("index.html", "bundle.js"):
 # just failing partway through. Setting WIDGET_DEBUG_MINIMAL=1 swaps in a
 # dependency-free, few-hundred-byte widget instead, to isolate whether size/
 # complexity is what's silently blocked. Remove once diagnosed.
-_WIDGET_DEBUG_MINIMAL = os.environ.get("WIDGET_DEBUG_MINIMAL") == "1"
+# Hardcoded true (not env-gated) while actively bisecting -- simpler to flip
+# back to `os.environ.get("WIDGET_DEBUG_MINIMAL") == "1"` (or just delete this
+# whole block) than to manage a Render dashboard env var per test round.
+_WIDGET_DEBUG_MINIMAL = True
 _MINIMAL_TEST_WIDGET_HTML = (
     '<!doctype html><html><head><meta charset="utf-8">'
     "<title>Minimal Test Widget</title></head>"
