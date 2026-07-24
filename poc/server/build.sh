@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build the widget bundle first so the Python server can serve it as static files.
-cd "$(dirname "$0")/../../widget"
+cd "$(dirname "$0")/../widget"
 npm install
 npm run build
 
