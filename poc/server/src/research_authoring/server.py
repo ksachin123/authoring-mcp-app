@@ -70,13 +70,34 @@ for _asset in ("index.html", "bundle.js"):
         logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
 
 
+# TEMPORARY debugging aid: the widget renders a placeholder frame in ChatGPT
+# but shows zero content -- not even the visible error text
+# waitForOpenAiBridge() renders on failure -- meaning the ~1MB inline script
+# (React + ReactDOM bundled) may not be executing in the iframe AT ALL, not
+# just failing partway through. Setting WIDGET_DEBUG_MINIMAL=1 swaps in a
+# dependency-free, few-hundred-byte widget instead, to isolate whether size/
+# complexity is what's silently blocked. Remove once diagnosed.
+_WIDGET_DEBUG_MINIMAL = os.environ.get("WIDGET_DEBUG_MINIMAL") == "1"
+_MINIMAL_TEST_WIDGET_HTML = (
+    '<!doctype html><html><head><meta charset="utf-8">'
+    "<title>Minimal Test Widget</title></head>"
+    '<body><div id="root">before-script ran</div>'
+    "<script>"
+    "document.getElementById('root').textContent = "
+    "'minimal widget JS executed at ' + new Date().toISOString();"
+    "</script></body></html>"
+)
+
+
 @mcp.resource(
     "ui://widget/report-workspace.html",
     mime_type="text/html;profile=mcp-app",
     meta={"ui": {"prefersBorder": True}},
 )
 def report_workspace_widget() -> str:
-    logger.info("resource read: ui://widget/report-workspace.html")
+    logger.info("resource read: ui://widget/report-workspace.html (minimal=%s)", _WIDGET_DEBUG_MINIMAL)
+    if _WIDGET_DEBUG_MINIMAL:
+        return _MINIMAL_TEST_WIDGET_HTML
     with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
         html = f.read()
     with open(os.path.join(_WIDGET_DIST, "bundle.js")) as f:
