@@ -130,21 +130,25 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         description="Assemble a draft section from approved artefacts (not persisted until commit_section)."
     )
     @trace_tool_call
-    def draft_section_tool(report_id: str, section_type: str, approved_artefact_ids: list[str]) -> str:
+    def draft_section_tool(section_type: str, approved_artefact_ids: list[str]) -> str:
         artefacts = []
         for artefact_id in approved_artefact_ids:
             artefact = get_latest_artefact(db, artefact_id)
             if artefact is None:
                 raise ValueError(f"Artefact {artefact_id} not found")
             artefacts.append(artefact)
-        draft = draft_section(report_id=report_id, section_type=section_type, approved_artefacts=artefacts)
+        draft = draft_section(section_type=section_type, approved_artefacts=artefacts)
         return json.dumps(draft)
 
-    @mcp.tool(description="Commit analyst-refined section prose into the governed report document.")
+    @mcp.tool(
+        description=(
+            "Commit analyst-refined section prose into the governed report document. "
+            "There is a single report per session -- no report id needed."
+        )
+    )
     @trace_tool_call
     def commit_section_tool(
         actor: str,
-        report_id: str,
         section_type: str,
         content: str,
         claim_ids: list[str],
@@ -152,22 +156,25 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         existing_section_id: Optional[str] = None,
     ) -> str:
         section = commit_section(
-            db, actor=actor, report_id=report_id, section_type=section_type, content=content,
+            db, actor=actor, section_type=section_type, content=content,
             claim_ids=claim_ids, approved_artefact_ids=approved_artefact_ids,
             existing_section_id=existing_section_id,
         )
         return json.dumps(asdict(section))
 
-    @mcp.tool(description="Validate and order committed sections into a ready-for-export report.")
+    @mcp.tool(
+        description=(
+            "Validate and order committed sections into a ready-for-export report. "
+            "There is a single report per session -- no report id needed."
+        )
+    )
     @trace_tool_call
-    def assemble_report_tool(actor: str, report_id: str, section_order: list[str]) -> str:
-        report = assemble_report(db, actor=actor, report_id=report_id, section_order=section_order)
+    def assemble_report_tool(actor: str, section_order: list[str]) -> str:
+        report = assemble_report(db, actor=actor, section_order=section_order)
         return json.dumps(asdict(report))
 
     @mcp.tool(description="Export a ready-for-export report to Markdown with resolved citations.")
     @trace_tool_call
-    def export_report_tool(actor: str, report_id: str, template_title: str) -> str:
-        markdown, _report = export_report_to_markdown(
-            db, actor=actor, report_id=report_id, template_title=template_title
-        )
+    def export_report_tool(actor: str, template_title: str) -> str:
+        markdown, _report = export_report_to_markdown(db, actor=actor, template_title=template_title)
         return markdown

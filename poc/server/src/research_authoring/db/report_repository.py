@@ -55,6 +55,25 @@ def get_latest_report(db: sqlite3.Connection, id: str) -> Optional[Report]:
     return _row_to_report(row) if row else None
 
 
+_DEFAULT_REPORT_TEMPLATE_ID = "default"
+
+
+def get_or_create_default_report(db: sqlite3.Connection) -> Report:
+    """This POC has no multi-report tool surface -- there is exactly one
+    implicit report per database/session, so nothing needs to supply a
+    report_id. The first-ever inserted report row (by SQLite's own rowid,
+    stable across that report's later versions since they share its id) is
+    treated as "the" report; one is created lazily on first use if none
+    exists yet.
+    """
+    row = db.execute("SELECT id FROM reports ORDER BY rowid ASC LIMIT 1").fetchone()
+    if row is not None:
+        report = get_latest_report(db, row["id"])
+        assert report is not None
+        return report
+    return create_report(db, _DEFAULT_REPORT_TEMPLATE_ID)
+
+
 def create_report_version(db: sqlite3.Connection, id: str, **patch) -> Report:
     allowed_fields = {"section_ids", "status", "exported_at", "export_ref"}
     unknown_keys = set(patch.keys()) - allowed_fields

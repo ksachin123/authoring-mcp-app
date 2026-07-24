@@ -1,9 +1,9 @@
 import sqlite3
 from datetime import datetime, timezone
 from research_authoring.db.report_repository import (
-    get_latest_report,
     get_latest_report_section,
     create_report_version,
+    get_or_create_default_report,
 )
 from research_authoring.db.claim_repository import get_claim
 from research_authoring.db.audit_repository import write_audit_entry
@@ -17,11 +17,9 @@ _SECTION_TITLES = {
 
 
 def export_report_to_markdown(
-    db: sqlite3.Connection, *, actor: str, report_id: str, template_title: str
+    db: sqlite3.Connection, *, actor: str, template_title: str
 ) -> tuple[str, Report]:
-    report = get_latest_report(db, report_id)
-    if report is None:
-        raise ValueError(f"Report {report_id} not found")
+    report = get_or_create_default_report(db)
     if report.status != "ready_for_export":
         raise ValueError("Report must be ready_for_export before exporting")
 
@@ -55,9 +53,9 @@ def export_report_to_markdown(
     markdown = "\n".join(lines)
 
     exported = create_report_version(
-        db, report_id, status="exported",
+        db, report.id, status="exported",
         exported_at=datetime.now(timezone.utc).isoformat(),
-        export_ref=f"markdown:{report_id}",
+        export_ref=f"markdown:{report.id}",
     )
 
     write_audit_entry(

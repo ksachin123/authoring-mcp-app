@@ -4,9 +4,9 @@ from typing import Optional
 from research_authoring.db.report_repository import (
     create_report_section,
     create_report_section_version,
-    get_latest_report,
     get_latest_report_section,
     create_report_version,
+    get_or_create_default_report,
 )
 from research_authoring.db.audit_repository import write_audit_entry
 from research_authoring.db.artefact_repository import get_latest_artefact
@@ -17,7 +17,6 @@ def commit_section(
     db: sqlite3.Connection,
     *,
     actor: str,
-    report_id: str,
     section_type: str,
     content: str,
     claim_ids: list[str],
@@ -43,12 +42,9 @@ def commit_section(
             raise ValueError(f"Claim {claim_id} is not part of any approved artefact in approved_artefact_ids")
 
     if existing_section_id:
-        # Validate that the section belongs to the passed report_id
         current_section = get_latest_report_section(db, existing_section_id)
         if current_section is None:
             raise ValueError(f"Section {existing_section_id} not found")
-        if current_section.report_id != report_id:
-            raise ValueError(f"Section {existing_section_id} does not belong to report {report_id}")
 
         section = create_report_section_version(
             db,
@@ -60,14 +56,13 @@ def commit_section(
             committed_at=now,
         )
     else:
-        # Validate report exists BEFORE creating the section to avoid orphaned sections
-        report = get_latest_report(db, report_id)
-        if report is None:
-            raise ValueError(f"Report {report_id} not found")
+        # This POC has one implicit report per session, auto-created here on
+        # first commit -- see get_or_create_default_report.
+        report = get_or_create_default_report(db)
 
         section = create_report_section(
             db,
-            report_id=report_id,
+            report_id=report.id,
             section_type=section_type,
             content=content,
             claim_ids=claim_ids,
@@ -75,7 +70,7 @@ def commit_section(
             committed_by=actor,
             committed_at=now,
         )
-        create_report_version(db, report_id, section_ids=[*report.section_ids, section.id])
+        create_report_version(db, report.id, section_ids=[*report.section_ids, section.id])
 
     write_audit_entry(
         db,
