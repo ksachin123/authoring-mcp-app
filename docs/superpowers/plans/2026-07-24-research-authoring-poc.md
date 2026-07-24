@@ -2,13 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a proof-of-concept that validates the ChatGPT-native research authoring architecture end-to-end: a real Apps SDK app running in ChatGPT, backed by our own MCP server and SQLite datastore, with a real FactSet connector, claim-level citations, a groundedness eval gate, human approval, a multi-section report template, a ChatGPT Skill wrapping the workflow, and Markdown export.
+**Goal:** Build a proof-of-concept that validates the ChatGPT-native research authoring architecture end-to-end: a real Apps SDK app running in ChatGPT, backed by our own Python MCP server and SQLite datastore, with a real FactSet connector, claim-level citations, a groundedness eval gate, human approval, a multi-section report template, a ChatGPT Skill wrapping the workflow, and Markdown export.
 
-**Architecture:** A single Node.js/TypeScript MCP server exposes tools for each pipeline stage (ingest, synthesize, eval, approve, draft, commit, assemble, export) backed by a SQLite database implementing the Source/Claim/Artefact/ReportSection/Report/AuditLogEntry model from the design spec. A React-based Apps SDK widget (fullscreen mode) renders the report workspace, artefact review queue, and citation panel. ChatGPT is the conversational and rendering surface only — all durable state lives server-side.
+**Architecture:** A single Python MCP server (using the official `mcp` SDK's `FastMCP`) exposes tools for each pipeline stage (ingest, synthesize, eval, approve, draft, commit, assemble, export) backed by a SQLite database implementing the Source/Claim/Artefact/ReportSection/Report/AuditLogEntry model from the design spec. A React-based Apps SDK widget (fullscreen mode) renders the report workspace, artefact review queue, and citation panel — the widget must be a browser-rendered app because ChatGPT hosts Apps SDK UI in an iframe; this is the one part of the stack that cannot be Python regardless of backend choice. ChatGPT is the conversational and rendering surface only — all durable state lives server-side.
 
-**Tech Stack:** TypeScript, Node.js (v20+), `@modelcontextprotocol/sdk`, `better-sqlite3`, `express`, `openai` SDK, React + `esbuild` for the widget, `vitest` for tests.
+**Tech Stack:** Python 3.11+, `mcp` (official Python MCP SDK, `FastMCP`), stdlib `sqlite3`, `openai` Python SDK, `requests` for the FactSet client, `pytest` for tests, `uvicorn` to serve the MCP app. Widget: React + TypeScript + `esbuild`, served as static files alongside the MCP server.
 
 **Spec:** `docs/superpowers/specs/2026-07-24-research-authoring-design.md`
+
+**Deployment target:** Render.com free tier. Free web services have an **ephemeral filesystem** — the local SQLite file is wiped on every redeploy, restart, or wake-from-spin-down — and no persistent disk is available on the free plan. This POC accepts that tradeoff deliberately: SQLite stays as-is (no Postgres migration), and the end-to-end verification (Task 19) must be completed in one continuous session before the free instance spins down from ~15 minutes of inactivity. This is a documented POC limitation, not a defect — the goal is proving the architecture and integration, not persistence durability on this specific host.
 
 ## Global Constraints
 
@@ -18,6 +20,7 @@
 - Every state transition (ingest, synthesize, eval, approve, reject, commit, export) writes an `AuditLogEntry` (per Governance Hooks).
 - A passing eval makes an artefact *eligible* for approval; it never auto-approves (per Testing & Evals — human is the final gate).
 - POC scope excludes: LSEG connector, full financial-error-taxonomy eval suite, eval-of-the-evals regression harness, second-tier compliance-reviewer gate, RBAC/multi-tenant rollout, PDF/Word export (Markdown only), and a custom `search_web` tool (ChatGPT's native web search covers that input path; results are ingested via `ingest_document`).
+- All server-side logic (DB, tools, eval, FactSet client) is Python. Only the widget UI is TypeScript/React, because Apps SDK widgets render in a browser iframe inside ChatGPT — this is a platform requirement, not a stack preference.
 
 ---
 
@@ -25,147 +28,118 @@
 
 ```
 poc/
-  package.json
-  tsconfig.json
-  vitest.config.ts
-  .env.example
-  src/
-    db/
-      schema.sql
-      db.ts
-      types.ts
-      sourceRepository.ts
-      claimRepository.ts
-      artefactRepository.ts
-      reportRepository.ts        # Report + ReportSection repositories
-      auditRepository.ts
-    llm/
-      openaiClient.ts
-    eval/
-      claimExtractor.ts
-      groundednessEval.ts
-    factset/
-      factsetClient.ts
-    tools/
-      ingestDocument.ts
-      fetchFactsetData.ts
-      synthesizeArtefact.ts
-      runEval.ts
-      approveArtefact.ts
-      draftSection.ts
-      commitSection.ts
-      assembleReport.ts
-      exportReport.ts
-      registerTools.ts
-    server.ts
-    widget/
-      src/
-        openaiBridge.ts
-        ReportWorkspace.tsx
-      index.html
-      build.mjs
+  server/
+    pyproject.toml
+    .env.example
+    src/
+      research_authoring/
+        __init__.py
+        db/
+          __init__.py
+          schema.sql
+          connection.py
+          types.py
+          source_repository.py
+          claim_repository.py
+          artefact_repository.py
+          report_repository.py        # Report + ReportSection repositories
+          audit_repository.py
+        llm/
+          __init__.py
+          openai_client.py
+        eval/
+          __init__.py
+          claim_extractor.py
+          groundedness_eval.py
+        factset/
+          __init__.py
+          factset_client.py
+        tools/
+          __init__.py
+          ingest_document.py
+          fetch_factset_data.py
+          synthesize_artefact.py
+          run_eval.py
+          approve_artefact.py
+          draft_section.py
+          commit_section.py
+          assemble_report.py
+          export_report.py
+          register_tools.py
+        server.py
+    tests/
+      db/test_db.py
+      db/test_source_and_claim_repository.py
+      db/test_artefact_repository.py
+      db/test_report_repository.py
+      db/test_audit_repository.py
+      llm/test_openai_client.py
+      eval/test_claim_extractor.py
+      eval/test_groundedness_eval.py
+      factset/test_factset_client.py
+      tools/test_ingest_and_factset.py
+      tools/test_synthesize_artefact.py
+      tools/test_run_eval.py
+      tools/test_approve_artefact.py
+      tools/test_draft_and_commit_section.py
+      tools/test_assemble_and_export_report.py
+  widget/
+    package.json
+    tsconfig.json
+    src/
+      openaiBridge.ts
+      ReportWorkspace.tsx
+      entry.tsx
+    index.html
+    build.mjs
   skill/
     report-authoring-skill.md
-  tests/
-    db/sourceAndClaimRepository.test.ts
-    db/artefactRepository.test.ts
-    db/reportRepository.test.ts
-    db/auditRepository.test.ts
-    llm/openaiClient.test.ts
-    eval/claimExtractor.test.ts
-    eval/groundednessEval.test.ts
-    factset/factsetClient.test.ts
-    tools/ingestAndFactset.test.ts
-    tools/synthesizeArtefact.test.ts
-    tools/runEval.test.ts
-    tools/approveArtefact.test.ts
-    tools/draftAndCommitSection.test.ts
-    tools/assembleAndExportReport.test.ts
 ```
 
 ---
 
-### Task 1: Project scaffold & tooling
+### Task 1: Python project scaffold & tooling
 
 **Files:**
-- Create: `poc/package.json`
-- Create: `poc/tsconfig.json`
-- Create: `poc/vitest.config.ts`
-- Create: `poc/.env.example`
-- Create: `poc/.gitignore`
+- Create: `poc/server/pyproject.toml`
+- Create: `poc/server/.env.example`
+- Create: `poc/server/.gitignore`
+- Create: `poc/server/src/research_authoring/__init__.py`
 
 **Interfaces:**
-- Produces: a working `npm test` and `npm run typecheck` command every later task relies on.
+- Produces: a working `pytest` command and installed `research_authoring` package every later task relies on.
 
-- [ ] **Step 1: Create `poc/package.json`**
+- [ ] **Step 1: Create `poc/server/pyproject.toml`**
 
-```json
-{
-  "name": "research-authoring-poc",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "dev": "tsx src/server.ts",
-    "build:widget": "node src/widget/build.mjs"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "better-sqlite3": "^11.3.0",
-    "express": "^4.19.2",
-    "openai": "^4.60.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.14.0",
-    "@types/react": "^18.3.5",
-    "@types/react-dom": "^18.3.0",
-    "esbuild": "^0.23.1",
-    "tsx": "^4.19.0",
-    "typescript": "^5.5.4",
-    "vitest": "^2.0.5"
-  }
-}
+```toml
+[project]
+name = "research-authoring-poc"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.2.0",
+    "openai>=1.40.0",
+    "requests>=2.32.0",
+    "uvicorn>=0.30.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 ```
 
-- [ ] **Step 2: Create `poc/tsconfig.json`**
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "outDir": "dist",
-    "jsx": "react-jsx",
-    "resolveJsonModule": true
-  },
-  "include": ["src", "tests"]
-}
-```
-
-- [ ] **Step 3: Create `poc/vitest.config.ts`**
-
-```typescript
-import { defineConfig } from 'vitest/config';
-
-export default defineConfig({
-  test: {
-    environment: 'node',
-    include: ['tests/**/*.test.ts']
-  }
-});
-```
-
-- [ ] **Step 4: Create `poc/.env.example`**
+- [ ] **Step 2: Create `poc/server/.env.example`**
 
 ```
 OPENAI_API_KEY=
@@ -175,25 +149,41 @@ FACTSET_API_BASE_URL=https://api.factset.com
 DB_PATH=./data/poc.db
 ```
 
-- [ ] **Step 5: Create `poc/.gitignore`**
+- [ ] **Step 3: Create `poc/server/.gitignore`**
 
 ```
-node_modules/
-dist/
+.venv/
+__pycache__/
+*.pyc
 data/*.db
 .env
+*.egg-info/
 ```
 
-- [ ] **Step 6: Install dependencies and verify tooling**
+- [ ] **Step 4: Create `poc/server/src/research_authoring/__init__.py`**
 
-Run: `cd poc && npm install && npm run typecheck`
-Expected: install succeeds; typecheck passes with no source files yet (no errors reported since `src/` and `tests/` are empty of `.ts` files).
+```python
+```
 
-- [ ] **Step 7: Commit**
+(empty file — marks the package)
+
+- [ ] **Step 5: Create a virtualenv, install the package in editable+dev mode, verify pytest runs**
+
+Run:
+```bash
+cd poc/server
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest --collect-only
+```
+Expected: `pip install` succeeds; `pytest --collect-only` reports "no tests ran" (no test files exist yet) with no import errors.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add poc/package.json poc/package-lock.json poc/tsconfig.json poc/vitest.config.ts poc/.env.example poc/.gitignore
-git commit -m "chore: scaffold POC project (TypeScript, vitest, deps)"
+git add poc/server/pyproject.toml poc/server/.env.example poc/server/.gitignore poc/server/src/research_authoring/__init__.py
+git commit -m "chore: scaffold Python MCP server project (pyproject, pytest)"
 ```
 
 ---
@@ -201,85 +191,97 @@ git commit -m "chore: scaffold POC project (TypeScript, vitest, deps)"
 ### Task 2: Database schema & connection layer
 
 **Files:**
-- Create: `poc/src/db/schema.sql`
-- Create: `poc/src/db/types.ts`
-- Create: `poc/src/db/db.ts`
-- Test: `poc/tests/db/db.test.ts`
+- Create: `poc/server/src/research_authoring/db/__init__.py`
+- Create: `poc/server/src/research_authoring/db/schema.sql`
+- Create: `poc/server/src/research_authoring/db/types.py`
+- Create: `poc/server/src/research_authoring/db/connection.py`
+- Test: `poc/server/tests/db/test_db.py`
 
 **Interfaces:**
-- Produces: `createDb(path: string): Database.Database` — opens/creates a SQLite DB at `path` and applies `schema.sql`. All repository tasks (3, 4, 5, 6) consume this.
-- Produces (types.ts): `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` TypeScript interfaces used by every repository and tool task.
+- Produces: `create_db(path: str) -> sqlite3.Connection` — opens/creates a SQLite DB at `path`, sets `row_factory = sqlite3.Row`, and applies `schema.sql`. All repository tasks (3, 4, 5, 6) consume this.
+- Produces (types.py): `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` dataclasses used by every repository and tool task.
 
-- [ ] **Step 1: Create `poc/src/db/types.ts`**
+- [ ] **Step 1: Create `poc/server/src/research_authoring/db/__init__.py`** (empty)
 
-```typescript
-export interface Source {
-  id: string;
-  type: 'upload' | 'web_search' | 'connector:factset';
-  retrievedAt: string;
-  retrievedBy: string;
-  context: string;
-  rawContentRef: string;
-  externalUrl: string | null;
-}
+- [ ] **Step 2: Create `poc/server/src/research_authoring/db/types.py`**
 
-export interface Claim {
-  id: string;
-  text: string;
-  sourceId: string;
-  sourceExcerpt: string;
-  evalStatus: 'pending' | 'grounded' | 'unsupported' | 'conflicting';
-  evalScore: number | null;
-  evalRunId: string | null;
-}
+```python
+from dataclasses import dataclass
+from typing import Optional
 
-export interface Artefact {
-  id: string;
-  version: number;
-  type: 'thesis_point' | 'data_extract' | 'comparison_table';
-  content: string;
-  claimIds: string[];
-  status: 'draft' | 'pending_approval' | 'approved' | 'rejected';
-  approvedBy: string | null;
-  approvedAt: string | null;
-}
 
-export interface ReportSection {
-  id: string;
-  version: number;
-  reportId: string;
-  sectionType: string;
-  content: string;
-  claimIds: string[];
-  status: 'draft_in_chat' | 'committed' | 'approved';
-  committedBy: string | null;
-  committedAt: string | null;
-}
+@dataclass
+class Source:
+    id: str
+    type: str  # 'upload' | 'web_search' | 'connector:factset'
+    retrieved_at: str
+    retrieved_by: str
+    context: str
+    raw_content_ref: str
+    external_url: Optional[str]
 
-export interface Report {
-  id: string;
-  version: number;
-  templateId: string;
-  sectionIds: string[];
-  status: 'in_progress' | 'ready_for_export' | 'exported';
-  exportedAt: string | null;
-  exportRef: string | null;
-}
 
-export interface AuditLogEntry {
-  id: string;
-  actor: string;
-  action: string;
-  targetType: string;
-  targetId: string;
-  targetVersion: number | null;
-  timestamp: string;
-  evalRunId: string | null;
-  diff: string | null;
-}
+@dataclass
+class Claim:
+    id: str
+    text: str
+    source_id: str
+    source_excerpt: str
+    eval_status: str  # 'pending' | 'grounded' | 'unsupported' | 'conflicting'
+    eval_score: Optional[float]
+    eval_run_id: Optional[str]
+
+
+@dataclass
+class Artefact:
+    id: str
+    version: int
+    type: str  # 'thesis_point' | 'data_extract' | 'comparison_table'
+    content: str
+    claim_ids: list[str]
+    status: str  # 'draft' | 'pending_approval' | 'approved' | 'rejected'
+    approved_by: Optional[str]
+    approved_at: Optional[str]
+
+
+@dataclass
+class ReportSection:
+    id: str
+    version: int
+    report_id: str
+    section_type: str
+    content: str
+    claim_ids: list[str]
+    status: str  # 'draft_in_chat' | 'committed' | 'approved'
+    committed_by: Optional[str]
+    committed_at: Optional[str]
+
+
+@dataclass
+class Report:
+    id: str
+    version: int
+    template_id: str
+    section_ids: list[str]
+    status: str  # 'in_progress' | 'ready_for_export' | 'exported'
+    exported_at: Optional[str]
+    export_ref: Optional[str]
+
+
+@dataclass
+class AuditLogEntry:
+    id: str
+    actor: str
+    action: str
+    target_type: str
+    target_id: str
+    target_version: Optional[int]
+    timestamp: str
+    eval_run_id: Optional[str]
+    diff: Optional[str]
 ```
 
-- [ ] **Step 2: Create `poc/src/db/schema.sql`**
+- [ ] **Step 3: Create `poc/server/src/research_authoring/db/schema.sql`**
 
 ```sql
 CREATE TABLE IF NOT EXISTS sources (
@@ -351,73 +353,65 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 ```
 
-- [ ] **Step 3: Write the failing test for `createDb`**
+- [ ] **Step 4: Write the failing test**
 
-```typescript
-// poc/tests/db/db.test.ts
-import { describe, it, expect, afterEach } from 'vitest';
-import { unlinkSync, existsSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
+```python
+# poc/server/tests/db/test_db.py
+from research_authoring.db.connection import create_db
 
-const TEST_DB_PATH = './data/test-db.db';
 
-afterEach(() => {
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_create_db_creates_all_six_tables(tmp_path):
+    db_path = tmp_path / "test.db"
+    conn = create_db(str(db_path))
 
-describe('createDb', () => {
-  it('creates all six tables', () => {
-    const db = createDb(TEST_DB_PATH);
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-      .all()
-      .map((row: any) => row.name);
-    expect(tables).toEqual([
-      'artefacts',
-      'audit_log',
-      'claims',
-      'report_sections',
-      'reports',
-      'sources'
-    ]);
-    db.close();
-  });
-});
+    rows = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+    ).fetchall()
+    table_names = [row["name"] for row in rows]
+
+    assert table_names == [
+        "artefacts",
+        "audit_log",
+        "claims",
+        "report_sections",
+        "reports",
+        "sources",
+    ]
+    conn.close()
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+- [ ] **Step 5: Run test to verify it fails**
 
-Run: `cd poc && mkdir -p data && npx vitest run tests/db/db.test.ts`
-Expected: FAIL — `Cannot find module '../../src/db/db.js'`
+Run: `cd poc/server && mkdir -p tests/db && pytest tests/db/test_db.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.db.connection'`
 
-- [ ] **Step 5: Implement `poc/src/db/db.ts`**
+- [ ] **Step 6: Implement `poc/server/src/research_authoring/db/connection.py`**
 
-```typescript
-import Database from 'better-sqlite3';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+```python
+import sqlite3
+from pathlib import Path
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+_SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
-export function createDb(path: string): Database.Database {
-  const db = new Database(path);
-  db.pragma('foreign_keys = ON');
-  const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
-  db.exec(schema);
-  return db;
-}
+
+def create_db(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(_SCHEMA_PATH.read_text())
+    conn.commit()
+    return conn
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [ ] **Step 7: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/db/db.test.ts`
+Run: `cd poc/server && pytest tests/db/test_db.py -v`
 Expected: PASS (1 test)
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add poc/src/db/schema.sql poc/src/db/types.ts poc/src/db/db.ts poc/tests/db/db.test.ts
+git add poc/server/src/research_authoring/db/__init__.py poc/server/src/research_authoring/db/schema.sql poc/server/src/research_authoring/db/types.py poc/server/src/research_authoring/db/connection.py poc/server/tests/db/test_db.py
 git commit -m "feat: add SQLite schema and connection layer"
 ```
 
@@ -426,171 +420,219 @@ git commit -m "feat: add SQLite schema and connection layer"
 ### Task 3: Source & Claim repositories
 
 **Files:**
-- Create: `poc/src/db/sourceRepository.ts`
-- Create: `poc/src/db/claimRepository.ts`
-- Test: `poc/tests/db/sourceAndClaimRepository.test.ts`
+- Create: `poc/server/src/research_authoring/db/source_repository.py`
+- Create: `poc/server/src/research_authoring/db/claim_repository.py`
+- Test: `poc/server/tests/db/test_source_and_claim_repository.py`
 
 **Interfaces:**
-- Consumes: `createDb` from Task 2; `Source`, `Claim` types from `types.ts`.
-- Produces: `createSource(db, input: Omit<Source,'id'>): Source`, `getSource(db, id: string): Source | null`; `createClaim(db, input: Omit<Claim,'id'>): Claim`, `getClaim(db, id: string): Claim | null`, `updateClaimEval(db, id: string, evalStatus: Claim['evalStatus'], evalScore: number, evalRunId: string): Claim`. Tasks 9, 10, 11, 12, 13 consume these.
+- Consumes: `create_db` from Task 2; `Source`, `Claim` dataclasses from `types.py`.
+- Produces: `create_source(db, *, type, retrieved_at, retrieved_by, context, raw_content_ref, external_url) -> Source`, `get_source(db, id) -> Source | None`; `create_claim(db, *, text, source_id, source_excerpt, eval_status, eval_score, eval_run_id) -> Claim`, `get_claim(db, id) -> Claim | None`, `update_claim_eval(db, id, eval_status, eval_score, eval_run_id) -> Claim`. Tasks 9, 10, 11, 12, 13 consume these.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/db/sourceAndClaimRepository.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createSource, getSource } from '../../src/db/sourceRepository.js';
-import { createClaim, getClaim, updateClaimEval } from '../../src/db/claimRepository.js';
+```python
+# poc/server/tests/db/test_source_and_claim_repository.py
+from research_authoring.db.connection import create_db
+from research_authoring.db.source_repository import create_source, get_source
+from research_authoring.db.claim_repository import create_claim, get_claim, update_claim_eval
 
-const TEST_DB_PATH = './data/test-source-claim.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => {
-  db = createDb(TEST_DB_PATH);
-});
+def test_creates_and_retrieves_a_source(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    created = create_source(
+        db,
+        type="upload",
+        retrieved_at="2026-07-24T10:00:00Z",
+        retrieved_by="analyst-1",
+        context="Q2 10-Q upload",
+        raw_content_ref="blob://uploads/q2-10q.pdf",
+        external_url=None,
+    )
+    fetched = get_source(db, created.id)
+    assert fetched == created
+    db.close()
 
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
 
-describe('sourceRepository', () => {
-  it('creates and retrieves a source', () => {
-    const created = createSource(db, {
-      type: 'upload',
-      retrievedAt: '2026-07-24T10:00:00Z',
-      retrievedBy: 'analyst-1',
-      context: 'Q2 10-Q upload',
-      rawContentRef: 'blob://uploads/q2-10q.pdf',
-      externalUrl: null
-    });
-    const fetched = getSource(db, created.id);
-    expect(fetched).toEqual(created);
-  });
-});
+def test_creates_a_claim_linked_to_a_source_and_updates_its_eval_result(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    source = create_source(
+        db,
+        type="connector:factset",
+        retrieved_at="2026-07-24T10:05:00Z",
+        retrieved_by="analyst-1",
+        context="FactSet consensus EPS query",
+        raw_content_ref="factset://fundamentals/AAPL",
+        external_url="https://factset.com",
+    )
+    claim = create_claim(
+        db,
+        text="Consensus FY26 EPS is $7.42",
+        source_id=source.id,
+        source_excerpt="FY26 EPS estimate: 7.42",
+        eval_status="pending",
+        eval_score=None,
+        eval_run_id=None,
+    )
+    assert claim.source_id == source.id
 
-describe('claimRepository', () => {
-  it('creates a claim linked to a source and updates its eval result', () => {
-    const source = createSource(db, {
-      type: 'connector:factset',
-      retrievedAt: '2026-07-24T10:05:00Z',
-      retrievedBy: 'analyst-1',
-      context: 'FactSet consensus EPS query',
-      rawContentRef: 'factset://fundamentals/AAPL',
-      externalUrl: 'https://factset.com'
-    });
-    const claim = createClaim(db, {
-      text: 'Consensus FY26 EPS is $7.42',
-      sourceId: source.id,
-      sourceExcerpt: 'FY26 EPS estimate: 7.42',
-      evalStatus: 'pending',
-      evalScore: null,
-      evalRunId: null
-    });
-    expect(claim.sourceId).toBe(source.id);
-
-    const updated = updateClaimEval(db, claim.id, 'grounded', 0.94, 'eval-run-1');
-    expect(updated.evalStatus).toBe('grounded');
-    expect(updated.evalScore).toBe(0.94);
-    expect(getClaim(db, claim.id)).toEqual(updated);
-  });
-});
+    updated = update_claim_eval(db, claim.id, "grounded", 0.94, "eval-run-1")
+    assert updated.eval_status == "grounded"
+    assert updated.eval_score == 0.94
+    assert get_claim(db, claim.id) == updated
+    db.close()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/db/sourceAndClaimRepository.test.ts`
-Expected: FAIL — `Cannot find module '../../src/db/sourceRepository.js'`
+Run: `cd poc/server && pytest tests/db/test_source_and_claim_repository.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.db.source_repository'`
 
-- [ ] **Step 3: Implement `poc/src/db/sourceRepository.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/db/source_repository.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { Source } from './types.js';
+```python
+import sqlite3
+import uuid
+from typing import Optional
+from .types import Source
 
-export function createSource(db: Database.Database, input: Omit<Source, 'id'>): Source {
-  const source: Source = { id: randomUUID(), ...input };
-  db.prepare(
-    `INSERT INTO sources (id, type, retrieved_at, retrieved_by, context, raw_content_ref, external_url)
-     VALUES (@id, @type, @retrievedAt, @retrievedBy, @context, @rawContentRef, @externalUrl)`
-  ).run(source);
-  return source;
-}
 
-export function getSource(db: Database.Database, id: string): Source | null {
-  const row = db.prepare('SELECT * FROM sources WHERE id = ?').get(id) as any;
-  if (!row) return null;
-  return {
-    id: row.id,
-    type: row.type,
-    retrievedAt: row.retrieved_at,
-    retrievedBy: row.retrieved_by,
-    context: row.context,
-    rawContentRef: row.raw_content_ref,
-    externalUrl: row.external_url
-  };
-}
+def create_source(
+    db: sqlite3.Connection,
+    *,
+    type: str,
+    retrieved_at: str,
+    retrieved_by: str,
+    context: str,
+    raw_content_ref: str,
+    external_url: Optional[str],
+) -> Source:
+    source = Source(
+        id=str(uuid.uuid4()),
+        type=type,
+        retrieved_at=retrieved_at,
+        retrieved_by=retrieved_by,
+        context=context,
+        raw_content_ref=raw_content_ref,
+        external_url=external_url,
+    )
+    db.execute(
+        """INSERT INTO sources (id, type, retrieved_at, retrieved_by, context, raw_content_ref, external_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            source.id,
+            source.type,
+            source.retrieved_at,
+            source.retrieved_by,
+            source.context,
+            source.raw_content_ref,
+            source.external_url,
+        ),
+    )
+    db.commit()
+    return source
+
+
+def get_source(db: sqlite3.Connection, id: str) -> Optional[Source]:
+    row = db.execute("SELECT * FROM sources WHERE id = ?", (id,)).fetchone()
+    if row is None:
+        return None
+    return Source(
+        id=row["id"],
+        type=row["type"],
+        retrieved_at=row["retrieved_at"],
+        retrieved_by=row["retrieved_by"],
+        context=row["context"],
+        raw_content_ref=row["raw_content_ref"],
+        external_url=row["external_url"],
+    )
 ```
 
-- [ ] **Step 4: Implement `poc/src/db/claimRepository.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/db/claim_repository.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { Claim } from './types.js';
+```python
+import sqlite3
+import uuid
+from typing import Optional
+from .types import Claim
 
-function rowToClaim(row: any): Claim {
-  return {
-    id: row.id,
-    text: row.text,
-    sourceId: row.source_id,
-    sourceExcerpt: row.source_excerpt,
-    evalStatus: row.eval_status,
-    evalScore: row.eval_score,
-    evalRunId: row.eval_run_id
-  };
-}
 
-export function createClaim(db: Database.Database, input: Omit<Claim, 'id'>): Claim {
-  const claim: Claim = { id: randomUUID(), ...input };
-  db.prepare(
-    `INSERT INTO claims (id, text, source_id, source_excerpt, eval_status, eval_score, eval_run_id)
-     VALUES (@id, @text, @sourceId, @sourceExcerpt, @evalStatus, @evalScore, @evalRunId)`
-  ).run(claim);
-  return claim;
-}
+def _row_to_claim(row: sqlite3.Row) -> Claim:
+    return Claim(
+        id=row["id"],
+        text=row["text"],
+        source_id=row["source_id"],
+        source_excerpt=row["source_excerpt"],
+        eval_status=row["eval_status"],
+        eval_score=row["eval_score"],
+        eval_run_id=row["eval_run_id"],
+    )
 
-export function getClaim(db: Database.Database, id: string): Claim | null {
-  const row = db.prepare('SELECT * FROM claims WHERE id = ?').get(id) as any;
-  return row ? rowToClaim(row) : null;
-}
 
-export function updateClaimEval(
-  db: Database.Database,
-  id: string,
-  evalStatus: Claim['evalStatus'],
-  evalScore: number,
-  evalRunId: string
-): Claim {
-  db.prepare(
-    'UPDATE claims SET eval_status = ?, eval_score = ?, eval_run_id = ? WHERE id = ?'
-  ).run(evalStatus, evalScore, evalRunId, id);
-  return getClaim(db, id) as Claim;
-}
+def create_claim(
+    db: sqlite3.Connection,
+    *,
+    text: str,
+    source_id: str,
+    source_excerpt: str,
+    eval_status: str,
+    eval_score: Optional[float],
+    eval_run_id: Optional[str],
+) -> Claim:
+    claim = Claim(
+        id=str(uuid.uuid4()),
+        text=text,
+        source_id=source_id,
+        source_excerpt=source_excerpt,
+        eval_status=eval_status,
+        eval_score=eval_score,
+        eval_run_id=eval_run_id,
+    )
+    db.execute(
+        """INSERT INTO claims (id, text, source_id, source_excerpt, eval_status, eval_score, eval_run_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            claim.id,
+            claim.text,
+            claim.source_id,
+            claim.source_excerpt,
+            claim.eval_status,
+            claim.eval_score,
+            claim.eval_run_id,
+        ),
+    )
+    db.commit()
+    return claim
+
+
+def get_claim(db: sqlite3.Connection, id: str) -> Optional[Claim]:
+    row = db.execute("SELECT * FROM claims WHERE id = ?", (id,)).fetchone()
+    return _row_to_claim(row) if row else None
+
+
+def update_claim_eval(
+    db: sqlite3.Connection,
+    id: str,
+    eval_status: str,
+    eval_score: float,
+    eval_run_id: str,
+) -> Claim:
+    db.execute(
+        "UPDATE claims SET eval_status = ?, eval_score = ?, eval_run_id = ? WHERE id = ?",
+        (eval_status, eval_score, eval_run_id, id),
+    )
+    db.commit()
+    return get_claim(db, id)  # type: ignore[return-value]
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/db/sourceAndClaimRepository.test.ts`
+Run: `cd poc/server && pytest tests/db/test_source_and_claim_repository.py -v`
 Expected: PASS (2 tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/db/sourceRepository.ts poc/src/db/claimRepository.ts poc/tests/db/sourceAndClaimRepository.test.ts
+git add poc/server/src/research_authoring/db/source_repository.py poc/server/src/research_authoring/db/claim_repository.py poc/server/tests/db/test_source_and_claim_repository.py
 git commit -m "feat: add source and claim repositories"
 ```
 
@@ -599,127 +641,158 @@ git commit -m "feat: add source and claim repositories"
 ### Task 4: Artefact repository with versioning
 
 **Files:**
-- Create: `poc/src/db/artefactRepository.ts`
-- Test: `poc/tests/db/artefactRepository.test.ts`
+- Create: `poc/server/src/research_authoring/db/artefact_repository.py`
+- Test: `poc/server/tests/db/test_artefact_repository.py`
 
 **Interfaces:**
-- Consumes: `createDb` (Task 2), `Artefact` type.
-- Produces: `createArtefact(db, input: Omit<Artefact,'id'|'version'>): Artefact` (version 1), `getLatestArtefact(db, id): Artefact | null`, `createArtefactVersion(db, id, patch: Partial<Pick<Artefact,'content'|'claimIds'|'status'|'approvedBy'|'approvedAt'>>): Artefact` (inserts version+1). Tasks 12, 13, 14 consume these.
+- Consumes: `create_db` (Task 2), `Artefact` dataclass.
+- Produces: `create_artefact(db, *, type, content, claim_ids, status, approved_by, approved_at) -> Artefact` (version 1), `get_latest_artefact(db, id) -> Artefact | None`, `create_artefact_version(db, id, **patch) -> Artefact` (inserts version+1, accepting any of `content`, `claim_ids`, `status`, `approved_by`, `approved_at` as keyword overrides). Tasks 12, 13, 14 consume these.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/db/artefactRepository.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createArtefact, getLatestArtefact, createArtefactVersion } from '../../src/db/artefactRepository.js';
+```python
+# poc/server/tests/db/test_artefact_repository.py
+from research_authoring.db.connection import create_db
+from research_authoring.db.artefact_repository import (
+    create_artefact,
+    get_latest_artefact,
+    create_artefact_version,
+)
 
-const TEST_DB_PATH = './data/test-artefact.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_creates_version_1_and_a_subsequent_version_without_losing_history(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
 
-describe('artefactRepository', () => {
-  it('creates version 1 and a subsequent version without losing history', () => {
-    const v1 = createArtefact(db, {
-      type: 'thesis_point',
-      content: 'Margin expansion driven by pricing power.',
-      claimIds: ['claim-1'],
-      status: 'draft',
-      approvedBy: null,
-      approvedAt: null
-    });
-    expect(v1.version).toBe(1);
+    v1 = create_artefact(
+        db,
+        type="thesis_point",
+        content="Margin expansion driven by pricing power.",
+        claim_ids=["claim-1"],
+        status="draft",
+        approved_by=None,
+        approved_at=None,
+    )
+    assert v1.version == 1
 
-    const v2 = createArtefactVersion(db, v1.id, { status: 'pending_approval' });
-    expect(v2.version).toBe(2);
-    expect(v2.status).toBe('pending_approval');
-    expect(v2.content).toBe(v1.content);
+    v2 = create_artefact_version(db, v1.id, status="pending_approval")
+    assert v2.version == 2
+    assert v2.status == "pending_approval"
+    assert v2.content == v1.content
 
-    const latest = getLatestArtefact(db, v1.id);
-    expect(latest).toEqual(v2);
+    latest = get_latest_artefact(db, v1.id)
+    assert latest == v2
 
-    const v1Row = db.prepare('SELECT * FROM artefacts WHERE id = ? AND version = 1').get(v1.id);
-    expect(v1Row).toBeTruthy();
-  });
-});
+    v1_row = db.execute(
+        "SELECT * FROM artefacts WHERE id = ? AND version = 1", (v1.id,)
+    ).fetchone()
+    assert v1_row is not None
+    db.close()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/db/artefactRepository.test.ts`
-Expected: FAIL — `Cannot find module '../../src/db/artefactRepository.js'`
+Run: `cd poc/server && pytest tests/db/test_artefact_repository.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.db.artefact_repository'`
 
-- [ ] **Step 3: Implement `poc/src/db/artefactRepository.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/db/artefact_repository.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { Artefact } from './types.js';
+```python
+import sqlite3
+import json
+import uuid
+from typing import Optional
+from .types import Artefact
 
-function rowToArtefact(row: any): Artefact {
-  return {
-    id: row.id,
-    version: row.version,
-    type: row.type,
-    content: row.content,
-    claimIds: JSON.parse(row.claim_ids),
-    status: row.status,
-    approvedBy: row.approved_by,
-    approvedAt: row.approved_at
-  };
-}
 
-function insertArtefactRow(db: Database.Database, artefact: Artefact): void {
-  db.prepare(
-    `INSERT INTO artefacts (id, version, type, content, claim_ids, status, approved_by, approved_at)
-     VALUES (@id, @version, @type, @content, @claimIds, @status, @approvedBy, @approvedAt)`
-  ).run({
-    ...artefact,
-    claimIds: JSON.stringify(artefact.claimIds)
-  });
-}
+def _row_to_artefact(row: sqlite3.Row) -> Artefact:
+    return Artefact(
+        id=row["id"],
+        version=row["version"],
+        type=row["type"],
+        content=row["content"],
+        claim_ids=json.loads(row["claim_ids"]),
+        status=row["status"],
+        approved_by=row["approved_by"],
+        approved_at=row["approved_at"],
+    )
 
-export function createArtefact(db: Database.Database, input: Omit<Artefact, 'id' | 'version'>): Artefact {
-  const artefact: Artefact = { id: randomUUID(), version: 1, ...input };
-  insertArtefactRow(db, artefact);
-  return artefact;
-}
 
-export function getLatestArtefact(db: Database.Database, id: string): Artefact | null {
-  const row = db
-    .prepare('SELECT * FROM artefacts WHERE id = ? ORDER BY version DESC LIMIT 1')
-    .get(id) as any;
-  return row ? rowToArtefact(row) : null;
-}
+def _insert_artefact_row(db: sqlite3.Connection, artefact: Artefact) -> None:
+    db.execute(
+        """INSERT INTO artefacts (id, version, type, content, claim_ids, status, approved_by, approved_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            artefact.id,
+            artefact.version,
+            artefact.type,
+            artefact.content,
+            json.dumps(artefact.claim_ids),
+            artefact.status,
+            artefact.approved_by,
+            artefact.approved_at,
+        ),
+    )
+    db.commit()
 
-export function createArtefactVersion(
-  db: Database.Database,
-  id: string,
-  patch: Partial<Pick<Artefact, 'content' | 'claimIds' | 'status' | 'approvedBy' | 'approvedAt'>>
-): Artefact {
-  const current = getLatestArtefact(db, id);
-  if (!current) throw new Error(`Artefact ${id} not found`);
-  const next: Artefact = { ...current, ...patch, version: current.version + 1 };
-  insertArtefactRow(db, next);
-  return next;
-}
+
+def create_artefact(
+    db: sqlite3.Connection,
+    *,
+    type: str,
+    content: str,
+    claim_ids: list[str],
+    status: str,
+    approved_by: Optional[str],
+    approved_at: Optional[str],
+) -> Artefact:
+    artefact = Artefact(
+        id=str(uuid.uuid4()),
+        version=1,
+        type=type,
+        content=content,
+        claim_ids=claim_ids,
+        status=status,
+        approved_by=approved_by,
+        approved_at=approved_at,
+    )
+    _insert_artefact_row(db, artefact)
+    return artefact
+
+
+def get_latest_artefact(db: sqlite3.Connection, id: str) -> Optional[Artefact]:
+    row = db.execute(
+        "SELECT * FROM artefacts WHERE id = ? ORDER BY version DESC LIMIT 1", (id,)
+    ).fetchone()
+    return _row_to_artefact(row) if row else None
+
+
+def create_artefact_version(db: sqlite3.Connection, id: str, **patch) -> Artefact:
+    current = get_latest_artefact(db, id)
+    if current is None:
+        raise ValueError(f"Artefact {id} not found")
+    next_artefact = Artefact(
+        id=current.id,
+        version=current.version + 1,
+        type=current.type,
+        content=patch.get("content", current.content),
+        claim_ids=patch.get("claim_ids", current.claim_ids),
+        status=patch.get("status", current.status),
+        approved_by=patch.get("approved_by", current.approved_by),
+        approved_at=patch.get("approved_at", current.approved_at),
+    )
+    _insert_artefact_row(db, next_artefact)
+    return next_artefact
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/db/artefactRepository.test.ts`
+Run: `cd poc/server && pytest tests/db/test_artefact_repository.py -v`
 Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/db/artefactRepository.ts poc/tests/db/artefactRepository.test.ts
+git add poc/server/src/research_authoring/db/artefact_repository.py poc/server/tests/db/test_artefact_repository.py
 git commit -m "feat: add versioned artefact repository"
 ```
 
@@ -728,196 +801,243 @@ git commit -m "feat: add versioned artefact repository"
 ### Task 5: Report & ReportSection repositories with versioning
 
 **Files:**
-- Create: `poc/src/db/reportRepository.ts`
-- Test: `poc/tests/db/reportRepository.test.ts`
+- Create: `poc/server/src/research_authoring/db/report_repository.py`
+- Test: `poc/server/tests/db/test_report_repository.py`
 
 **Interfaces:**
-- Consumes: `createDb` (Task 2), `Report`, `ReportSection` types.
-- Produces: `createReport(db, templateId: string): Report`, `getLatestReport(db, id): Report | null`, `createReportVersion(db, id, patch): Report`; `createReportSection(db, input: Omit<ReportSection,'id'|'version'>): ReportSection`, `getLatestReportSection(db, id): ReportSection | null`, `createReportSectionVersion(db, id, patch): ReportSection`. Tasks 15, 16 consume these.
+- Consumes: `create_db` (Task 2), `Report`, `ReportSection` dataclasses.
+- Produces: `create_report(db, template_id) -> Report`, `get_latest_report(db, id) -> Report | None`, `create_report_version(db, id, **patch) -> Report`; `create_report_section(db, *, report_id, section_type, content, claim_ids, status, committed_by, committed_at) -> ReportSection`, `get_latest_report_section(db, id) -> ReportSection | None`, `create_report_section_version(db, id, **patch) -> ReportSection`. Tasks 15, 16 consume these.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/db/reportRepository.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import {
-  createReport,
-  getLatestReport,
-  createReportVersion,
-  createReportSection,
-  getLatestReportSection,
-  createReportSectionVersion
-} from '../../src/db/reportRepository.js';
+```python
+# poc/server/tests/db/test_report_repository.py
+from research_authoring.db.connection import create_db
+from research_authoring.db.report_repository import (
+    create_report,
+    get_latest_report,
+    create_report_version,
+    create_report_section,
+    get_latest_report_section,
+    create_report_section_version,
+)
 
-const TEST_DB_PATH = './data/test-report.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_creates_a_report_and_a_section_versions_both_and_orders_sections(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
 
-describe('reportRepository', () => {
-  it('creates a report and a section, versions both, and orders sections', () => {
-    const report = createReport(db, 'equity-initiation-v1');
-    expect(report.version).toBe(1);
-    expect(report.sectionIds).toEqual([]);
+    report = create_report(db, "equity-initiation-v1")
+    assert report.version == 1
+    assert report.section_ids == []
 
-    const section = createReportSection(db, {
-      reportId: report.id,
-      sectionType: 'investment_thesis',
-      content: 'Draft thesis text.',
-      claimIds: ['claim-1', 'claim-2'],
-      status: 'draft_in_chat',
-      committedBy: null,
-      committedAt: null
-    });
-    expect(section.version).toBe(1);
+    section = create_report_section(
+        db,
+        report_id=report.id,
+        section_type="investment_thesis",
+        content="Draft thesis text.",
+        claim_ids=["claim-1", "claim-2"],
+        status="draft_in_chat",
+        committed_by=None,
+        committed_at=None,
+    )
+    assert section.version == 1
 
-    const committedSection = createReportSectionVersion(db, section.id, {
-      status: 'committed',
-      committedBy: 'analyst-1',
-      committedAt: '2026-07-24T11:00:00Z'
-    });
-    expect(committedSection.version).toBe(2);
-    expect(committedSection.status).toBe('committed');
+    committed_section = create_report_section_version(
+        db,
+        section.id,
+        status="committed",
+        committed_by="analyst-1",
+        committed_at="2026-07-24T11:00:00Z",
+    )
+    assert committed_section.version == 2
+    assert committed_section.status == "committed"
 
-    const reportWithSection = createReportVersion(db, report.id, {
-      sectionIds: [section.id]
-    });
-    expect(reportWithSection.version).toBe(2);
-    expect(reportWithSection.sectionIds).toEqual([section.id]);
+    report_with_section = create_report_version(db, report.id, section_ids=[section.id])
+    assert report_with_section.version == 2
+    assert report_with_section.section_ids == [section.id]
 
-    expect(getLatestReport(db, report.id)).toEqual(reportWithSection);
-    expect(getLatestReportSection(db, section.id)).toEqual(committedSection);
-  });
-});
+    assert get_latest_report(db, report.id) == report_with_section
+    assert get_latest_report_section(db, section.id) == committed_section
+    db.close()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/db/reportRepository.test.ts`
-Expected: FAIL — `Cannot find module '../../src/db/reportRepository.js'`
+Run: `cd poc/server && pytest tests/db/test_report_repository.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.db.report_repository'`
 
-- [ ] **Step 3: Implement `poc/src/db/reportRepository.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/db/report_repository.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { Report, ReportSection } from './types.js';
+```python
+import sqlite3
+import json
+import uuid
+from typing import Optional
+from .types import Report, ReportSection
 
-function rowToReport(row: any): Report {
-  return {
-    id: row.id,
-    version: row.version,
-    templateId: row.template_id,
-    sectionIds: JSON.parse(row.section_ids),
-    status: row.status,
-    exportedAt: row.exported_at,
-    exportRef: row.export_ref
-  };
-}
 
-function insertReportRow(db: Database.Database, report: Report): void {
-  db.prepare(
-    `INSERT INTO reports (id, version, template_id, section_ids, status, exported_at, export_ref)
-     VALUES (@id, @version, @templateId, @sectionIds, @status, @exportedAt, @exportRef)`
-  ).run({ ...report, sectionIds: JSON.stringify(report.sectionIds) });
-}
+def _row_to_report(row: sqlite3.Row) -> Report:
+    return Report(
+        id=row["id"],
+        version=row["version"],
+        template_id=row["template_id"],
+        section_ids=json.loads(row["section_ids"]),
+        status=row["status"],
+        exported_at=row["exported_at"],
+        export_ref=row["export_ref"],
+    )
 
-export function createReport(db: Database.Database, templateId: string): Report {
-  const report: Report = {
-    id: randomUUID(),
-    version: 1,
-    templateId,
-    sectionIds: [],
-    status: 'in_progress',
-    exportedAt: null,
-    exportRef: null
-  };
-  insertReportRow(db, report);
-  return report;
-}
 
-export function getLatestReport(db: Database.Database, id: string): Report | null {
-  const row = db.prepare('SELECT * FROM reports WHERE id = ? ORDER BY version DESC LIMIT 1').get(id) as any;
-  return row ? rowToReport(row) : null;
-}
+def _insert_report_row(db: sqlite3.Connection, report: Report) -> None:
+    db.execute(
+        """INSERT INTO reports (id, version, template_id, section_ids, status, exported_at, export_ref)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            report.id,
+            report.version,
+            report.template_id,
+            json.dumps(report.section_ids),
+            report.status,
+            report.exported_at,
+            report.export_ref,
+        ),
+    )
+    db.commit()
 
-export function createReportVersion(
-  db: Database.Database,
-  id: string,
-  patch: Partial<Pick<Report, 'sectionIds' | 'status' | 'exportedAt' | 'exportRef'>>
-): Report {
-  const current = getLatestReport(db, id);
-  if (!current) throw new Error(`Report ${id} not found`);
-  const next: Report = { ...current, ...patch, version: current.version + 1 };
-  insertReportRow(db, next);
-  return next;
-}
 
-function rowToSection(row: any): ReportSection {
-  return {
-    id: row.id,
-    version: row.version,
-    reportId: row.report_id,
-    sectionType: row.section_type,
-    content: row.content,
-    claimIds: JSON.parse(row.claim_ids),
-    status: row.status,
-    committedBy: row.committed_by,
-    committedAt: row.committed_at
-  };
-}
+def create_report(db: sqlite3.Connection, template_id: str) -> Report:
+    report = Report(
+        id=str(uuid.uuid4()),
+        version=1,
+        template_id=template_id,
+        section_ids=[],
+        status="in_progress",
+        exported_at=None,
+        export_ref=None,
+    )
+    _insert_report_row(db, report)
+    return report
 
-function insertSectionRow(db: Database.Database, section: ReportSection): void {
-  db.prepare(
-    `INSERT INTO report_sections (id, version, report_id, section_type, content, claim_ids, status, committed_by, committed_at)
-     VALUES (@id, @version, @reportId, @sectionType, @content, @claimIds, @status, @committedBy, @committedAt)`
-  ).run({ ...section, claimIds: JSON.stringify(section.claimIds) });
-}
 
-export function createReportSection(
-  db: Database.Database,
-  input: Omit<ReportSection, 'id' | 'version'>
-): ReportSection {
-  const section: ReportSection = { id: randomUUID(), version: 1, ...input };
-  insertSectionRow(db, section);
-  return section;
-}
+def get_latest_report(db: sqlite3.Connection, id: str) -> Optional[Report]:
+    row = db.execute(
+        "SELECT * FROM reports WHERE id = ? ORDER BY version DESC LIMIT 1", (id,)
+    ).fetchone()
+    return _row_to_report(row) if row else None
 
-export function getLatestReportSection(db: Database.Database, id: string): ReportSection | null {
-  const row = db
-    .prepare('SELECT * FROM report_sections WHERE id = ? ORDER BY version DESC LIMIT 1')
-    .get(id) as any;
-  return row ? rowToSection(row) : null;
-}
 
-export function createReportSectionVersion(
-  db: Database.Database,
-  id: string,
-  patch: Partial<Pick<ReportSection, 'content' | 'claimIds' | 'status' | 'committedBy' | 'committedAt'>>
-): ReportSection {
-  const current = getLatestReportSection(db, id);
-  if (!current) throw new Error(`ReportSection ${id} not found`);
-  const next: ReportSection = { ...current, ...patch, version: current.version + 1 };
-  insertSectionRow(db, next);
-  return next;
-}
+def create_report_version(db: sqlite3.Connection, id: str, **patch) -> Report:
+    current = get_latest_report(db, id)
+    if current is None:
+        raise ValueError(f"Report {id} not found")
+    next_report = Report(
+        id=current.id,
+        version=current.version + 1,
+        template_id=current.template_id,
+        section_ids=patch.get("section_ids", current.section_ids),
+        status=patch.get("status", current.status),
+        exported_at=patch.get("exported_at", current.exported_at),
+        export_ref=patch.get("export_ref", current.export_ref),
+    )
+    _insert_report_row(db, next_report)
+    return next_report
+
+
+def _row_to_section(row: sqlite3.Row) -> ReportSection:
+    return ReportSection(
+        id=row["id"],
+        version=row["version"],
+        report_id=row["report_id"],
+        section_type=row["section_type"],
+        content=row["content"],
+        claim_ids=json.loads(row["claim_ids"]),
+        status=row["status"],
+        committed_by=row["committed_by"],
+        committed_at=row["committed_at"],
+    )
+
+
+def _insert_section_row(db: sqlite3.Connection, section: ReportSection) -> None:
+    db.execute(
+        """INSERT INTO report_sections
+           (id, version, report_id, section_type, content, claim_ids, status, committed_by, committed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            section.id,
+            section.version,
+            section.report_id,
+            section.section_type,
+            section.content,
+            json.dumps(section.claim_ids),
+            section.status,
+            section.committed_by,
+            section.committed_at,
+        ),
+    )
+    db.commit()
+
+
+def create_report_section(
+    db: sqlite3.Connection,
+    *,
+    report_id: str,
+    section_type: str,
+    content: str,
+    claim_ids: list[str],
+    status: str,
+    committed_by: Optional[str],
+    committed_at: Optional[str],
+) -> ReportSection:
+    section = ReportSection(
+        id=str(uuid.uuid4()),
+        version=1,
+        report_id=report_id,
+        section_type=section_type,
+        content=content,
+        claim_ids=claim_ids,
+        status=status,
+        committed_by=committed_by,
+        committed_at=committed_at,
+    )
+    _insert_section_row(db, section)
+    return section
+
+
+def get_latest_report_section(db: sqlite3.Connection, id: str) -> Optional[ReportSection]:
+    row = db.execute(
+        "SELECT * FROM report_sections WHERE id = ? ORDER BY version DESC LIMIT 1", (id,)
+    ).fetchone()
+    return _row_to_section(row) if row else None
+
+
+def create_report_section_version(db: sqlite3.Connection, id: str, **patch) -> ReportSection:
+    current = get_latest_report_section(db, id)
+    if current is None:
+        raise ValueError(f"ReportSection {id} not found")
+    next_section = ReportSection(
+        id=current.id,
+        version=current.version + 1,
+        report_id=current.report_id,
+        section_type=current.section_type,
+        content=patch.get("content", current.content),
+        claim_ids=patch.get("claim_ids", current.claim_ids),
+        status=patch.get("status", current.status),
+        committed_by=patch.get("committed_by", current.committed_by),
+        committed_at=patch.get("committed_at", current.committed_at),
+    )
+    _insert_section_row(db, next_section)
+    return next_section
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/db/reportRepository.test.ts`
+Run: `cd poc/server && pytest tests/db/test_report_repository.py -v`
 Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/db/reportRepository.ts poc/tests/db/reportRepository.test.ts
+git add poc/server/src/research_authoring/db/report_repository.py poc/server/tests/db/test_report_repository.py
 git commit -m "feat: add versioned report and report-section repositories"
 ```
 
@@ -926,122 +1046,144 @@ git commit -m "feat: add versioned report and report-section repositories"
 ### Task 6: Audit log repository
 
 **Files:**
-- Create: `poc/src/db/auditRepository.ts`
-- Test: `poc/tests/db/auditRepository.test.ts`
+- Create: `poc/server/src/research_authoring/db/audit_repository.py`
+- Test: `poc/server/tests/db/test_audit_repository.py`
 
 **Interfaces:**
-- Consumes: `createDb` (Task 2), `AuditLogEntry` type.
-- Produces: `writeAuditEntry(db, input: Omit<AuditLogEntry,'id'|'timestamp'>): AuditLogEntry`, `getAuditTrailForTarget(db, targetType: string, targetId: string): AuditLogEntry[]` (ordered by timestamp ascending). Every tool task (11–16) consumes `writeAuditEntry`.
+- Consumes: `create_db` (Task 2), `AuditLogEntry` dataclass.
+- Produces: `write_audit_entry(db, *, actor, action, target_type, target_id, target_version, eval_run_id, diff) -> AuditLogEntry`, `get_audit_trail_for_target(db, target_type, target_id) -> list[AuditLogEntry]` (ordered by timestamp ascending). Every tool task (11–16) consumes `write_audit_entry`.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/db/auditRepository.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { writeAuditEntry, getAuditTrailForTarget } from '../../src/db/auditRepository.js';
+```python
+# poc/server/tests/db/test_audit_repository.py
+import json
+from research_authoring.db.connection import create_db
+from research_authoring.db.audit_repository import write_audit_entry, get_audit_trail_for_target
 
-const TEST_DB_PATH = './data/test-audit.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_writes_entries_and_retrieves_them_in_chronological_order(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
 
-describe('auditRepository', () => {
-  it('writes entries and retrieves them in chronological order for a target', () => {
-    writeAuditEntry(db, {
-      actor: 'analyst-1',
-      action: 'synthesize_artefact',
-      targetType: 'artefact',
-      targetId: 'artefact-1',
-      targetVersion: 1,
-      evalRunId: null,
-      diff: null
-    });
-    writeAuditEntry(db, {
-      actor: 'analyst-1',
-      action: 'approve_artefact',
-      targetType: 'artefact',
-      targetId: 'artefact-1',
-      targetVersion: 2,
-      evalRunId: 'eval-run-1',
-      diff: JSON.stringify({ status: { from: 'pending_approval', to: 'approved' } })
-    });
+    write_audit_entry(
+        db,
+        actor="analyst-1",
+        action="synthesize_artefact",
+        target_type="artefact",
+        target_id="artefact-1",
+        target_version=1,
+        eval_run_id=None,
+        diff=None,
+    )
+    write_audit_entry(
+        db,
+        actor="analyst-1",
+        action="approve_artefact",
+        target_type="artefact",
+        target_id="artefact-1",
+        target_version=2,
+        eval_run_id="eval-run-1",
+        diff=json.dumps({"status": {"from": "pending_approval", "to": "approved"}}),
+    )
 
-    const trail = getAuditTrailForTarget(db, 'artefact', 'artefact-1');
-    expect(trail).toHaveLength(2);
-    expect(trail[0].action).toBe('synthesize_artefact');
-    expect(trail[1].action).toBe('approve_artefact');
-    expect(trail[1].evalRunId).toBe('eval-run-1');
-  });
-});
+    trail = get_audit_trail_for_target(db, "artefact", "artefact-1")
+    assert len(trail) == 2
+    assert trail[0].action == "synthesize_artefact"
+    assert trail[1].action == "approve_artefact"
+    assert trail[1].eval_run_id == "eval-run-1"
+    db.close()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/db/auditRepository.test.ts`
-Expected: FAIL — `Cannot find module '../../src/db/auditRepository.js'`
+Run: `cd poc/server && pytest tests/db/test_audit_repository.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.db.audit_repository'`
 
-- [ ] **Step 3: Implement `poc/src/db/auditRepository.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/db/audit_repository.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { AuditLogEntry } from './types.js';
+```python
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+from .types import AuditLogEntry
 
-function rowToEntry(row: any): AuditLogEntry {
-  return {
-    id: row.id,
-    actor: row.actor,
-    action: row.action,
-    targetType: row.target_type,
-    targetId: row.target_id,
-    targetVersion: row.target_version,
-    timestamp: row.timestamp,
-    evalRunId: row.eval_run_id,
-    diff: row.diff
-  };
-}
 
-export function writeAuditEntry(
-  db: Database.Database,
-  input: Omit<AuditLogEntry, 'id' | 'timestamp'>
-): AuditLogEntry {
-  const entry: AuditLogEntry = { id: randomUUID(), timestamp: new Date().toISOString(), ...input };
-  db.prepare(
-    `INSERT INTO audit_log (id, actor, action, target_type, target_id, target_version, timestamp, eval_run_id, diff)
-     VALUES (@id, @actor, @action, @targetType, @targetId, @targetVersion, @timestamp, @evalRunId, @diff)`
-  ).run(entry);
-  return entry;
-}
-
-export function getAuditTrailForTarget(
-  db: Database.Database,
-  targetType: string,
-  targetId: string
-): AuditLogEntry[] {
-  const rows = db
-    .prepare(
-      'SELECT * FROM audit_log WHERE target_type = ? AND target_id = ? ORDER BY timestamp ASC'
+def _row_to_entry(row: sqlite3.Row) -> AuditLogEntry:
+    return AuditLogEntry(
+        id=row["id"],
+        actor=row["actor"],
+        action=row["action"],
+        target_type=row["target_type"],
+        target_id=row["target_id"],
+        target_version=row["target_version"],
+        timestamp=row["timestamp"],
+        eval_run_id=row["eval_run_id"],
+        diff=row["diff"],
     )
-    .all(targetType, targetId) as any[];
-  return rows.map(rowToEntry);
-}
+
+
+def write_audit_entry(
+    db: sqlite3.Connection,
+    *,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    target_version: Optional[int],
+    eval_run_id: Optional[str],
+    diff: Optional[str],
+) -> AuditLogEntry:
+    entry = AuditLogEntry(
+        id=str(uuid.uuid4()),
+        actor=actor,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        target_version=target_version,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        eval_run_id=eval_run_id,
+        diff=diff,
+    )
+    db.execute(
+        """INSERT INTO audit_log
+           (id, actor, action, target_type, target_id, target_version, timestamp, eval_run_id, diff)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            entry.id,
+            entry.actor,
+            entry.action,
+            entry.target_type,
+            entry.target_id,
+            entry.target_version,
+            entry.timestamp,
+            entry.eval_run_id,
+            entry.diff,
+        ),
+    )
+    db.commit()
+    return entry
+
+
+def get_audit_trail_for_target(
+    db: sqlite3.Connection, target_type: str, target_id: str
+) -> list[AuditLogEntry]:
+    rows = db.execute(
+        "SELECT * FROM audit_log WHERE target_type = ? AND target_id = ? ORDER BY timestamp ASC",
+        (target_type, target_id),
+    ).fetchall()
+    return [_row_to_entry(row) for row in rows]
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/db/auditRepository.test.ts`
+Run: `cd poc/server && pytest tests/db/test_audit_repository.py -v`
 Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/db/auditRepository.ts poc/tests/db/auditRepository.test.ts
+git add poc/server/src/research_authoring/db/audit_repository.py poc/server/tests/db/test_audit_repository.py
 git commit -m "feat: add append-only audit log repository"
 ```
 
@@ -1050,79 +1192,123 @@ git commit -m "feat: add append-only audit log repository"
 ### Task 7: OpenAI client wrapper
 
 **Files:**
-- Create: `poc/src/llm/openaiClient.ts`
-- Test: `poc/tests/llm/openaiClient.test.ts`
+- Create: `poc/server/src/research_authoring/llm/__init__.py`
+- Create: `poc/server/src/research_authoring/llm/openai_client.py`
+- Test: `poc/server/tests/llm/test_openai_client.py`
 
 **Interfaces:**
-- Produces: `type ChatFn = (params: { system: string; user: string }) => Promise<string>` and `createOpenAIChatFn(client: Pick<OpenAI, 'chat'>, model?: string): ChatFn`. Tasks 8, 9 consume `ChatFn`.
+- Produces: `ChatFn = Callable[[str, str], str]` (called as `chat_fn(system, user) -> content`) and `create_openai_chat_fn(client, model: str = "gpt-5.5") -> ChatFn`. Tasks 8, 9 consume `ChatFn`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create `poc/server/src/research_authoring/llm/__init__.py`** (empty)
 
-```typescript
-// poc/tests/llm/openaiClient.test.ts
-import { describe, it, expect, vi } from 'vitest';
-import { createOpenAIChatFn } from '../../src/llm/openaiClient.js';
+- [ ] **Step 2: Write the failing test**
 
-describe('createOpenAIChatFn', () => {
-  it('calls chat.completions.create with system/user messages and returns the content', async () => {
-    const create = vi.fn().mockResolvedValue({
-      choices: [{ message: { content: 'the model response' } }]
-    });
-    const fakeClient = { chat: { completions: { create } } } as any;
+```python
+# poc/server/tests/llm/test_openai_client.py
+from research_authoring.llm.openai_client import create_openai_chat_fn
 
-    const chatFn = createOpenAIChatFn(fakeClient, 'gpt-5.5');
-    const result = await chatFn({ system: 'You are terse.', user: 'Say hi.' });
 
-    expect(result).toBe('the model response');
-    expect(create).toHaveBeenCalledWith({
-      model: 'gpt-5.5',
-      messages: [
-        { role: 'system', content: 'You are terse.' },
-        { role: 'user', content: 'Say hi.' }
-      ]
-    });
-  });
-});
+class FakeMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class FakeChoice:
+    def __init__(self, content):
+        self.message = FakeMessage(content)
+
+
+class FakeCompletionResponse:
+    def __init__(self, content):
+        self.choices = [FakeChoice(content)]
+
+
+class FakeCompletions:
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return FakeCompletionResponse("the model response")
+
+
+class FakeChat:
+    def __init__(self, completions):
+        self.completions = completions
+
+
+class FakeClient:
+    def __init__(self):
+        self.completions = FakeCompletions()
+        self.chat = FakeChat(self.completions)
+
+
+def test_calls_chat_completions_create_and_returns_content():
+    fake_client = FakeClient()
+    chat_fn = create_openai_chat_fn(fake_client, model="gpt-5.5")
+
+    result = chat_fn("You are terse.", "Say hi.")
+
+    assert result == "the model response"
+    assert fake_client.completions.calls == [
+        {
+            "model": "gpt-5.5",
+            "messages": [
+                {"role": "system", "content": "You are terse."},
+                {"role": "user", "content": "Say hi."},
+            ],
+        }
+    ]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/llm/openaiClient.test.ts`
-Expected: FAIL — `Cannot find module '../../src/llm/openaiClient.js'`
+Run: `cd poc/server && pytest tests/llm/test_openai_client.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.llm.openai_client'`
 
-- [ ] **Step 3: Implement `poc/src/llm/openaiClient.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/llm/openai_client.py`**
 
-```typescript
-import type OpenAI from 'openai';
+```python
+from typing import Callable, Protocol
 
-export type ChatFn = (params: { system: string; user: string }) => Promise<string>;
+ChatFn = Callable[[str, str], str]
 
-export function createOpenAIChatFn(
-  client: Pick<OpenAI, 'chat'>,
-  model: string = 'gpt-5.5'
-): ChatFn {
-  return async ({ system, user }) => {
-    const response = await client.chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user }
-      ]
-    });
-    return response.choices[0]?.message?.content ?? '';
-  };
-}
+
+class _ChatCompletionsLike(Protocol):
+    def create(self, **kwargs): ...
+
+
+class _ChatLike(Protocol):
+    completions: _ChatCompletionsLike
+
+
+class _ClientLike(Protocol):
+    chat: _ChatLike
+
+
+def create_openai_chat_fn(client: _ClientLike, model: str = "gpt-5.5") -> ChatFn:
+    def chat_fn(system: str, user: str) -> str:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content or ""
+
+    return chat_fn
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/llm/openaiClient.test.ts`
+Run: `cd poc/server && pytest tests/llm/test_openai_client.py -v`
 Expected: PASS (1 test)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/llm/openaiClient.ts poc/tests/llm/openaiClient.test.ts
+git add poc/server/src/research_authoring/llm/__init__.py poc/server/src/research_authoring/llm/openai_client.py poc/server/tests/llm/test_openai_client.py
 git commit -m "feat: add injectable OpenAI chat client wrapper"
 ```
 
@@ -1131,102 +1317,98 @@ git commit -m "feat: add injectable OpenAI chat client wrapper"
 ### Task 8: Claim extractor
 
 **Files:**
-- Create: `poc/src/eval/claimExtractor.ts`
-- Test: `poc/tests/eval/claimExtractor.test.ts`
+- Create: `poc/server/src/research_authoring/eval/__init__.py`
+- Create: `poc/server/src/research_authoring/eval/claim_extractor.py`
+- Test: `poc/server/tests/eval/test_claim_extractor.py`
 
 **Interfaces:**
 - Consumes: `ChatFn` from Task 7.
-- Produces: `extractClaims(chatFn: ChatFn, params: { generatedText: string; sourceExcerpt: string }): Promise<Array<{ text: string; sourceExcerpt: string }>>`. Task 11 (`synthesize_artefact`) consumes this.
+- Produces: `extract_claims(chat_fn: ChatFn, *, generated_text: str, source_excerpt: str) -> list[dict]` (each dict has `text`, `source_excerpt` keys). Task 12 (`synthesize_artefact`) consumes this.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create `poc/server/src/research_authoring/eval/__init__.py`** (empty)
 
-```typescript
-// poc/tests/eval/claimExtractor.test.ts
-import { describe, it, expect } from 'vitest';
-import { extractClaims } from '../../src/eval/claimExtractor.js';
+- [ ] **Step 2: Write the failing test**
 
-describe('extractClaims', () => {
-  it('parses the JSON array of claims returned by the chat function', async () => {
-    const fakeChatFn = async () =>
-      JSON.stringify([
-        { text: 'Revenue grew 12% YoY.', sourceExcerpt: 'Revenue increased 12% year-over-year' },
-        { text: 'Gross margin was 41%.', sourceExcerpt: 'Gross margin of 41%' }
-      ]);
+```python
+# poc/server/tests/eval/test_claim_extractor.py
+import json
+import pytest
+from research_authoring.eval.claim_extractor import extract_claims
 
-    const claims = await extractClaims(fakeChatFn, {
-      generatedText: 'Revenue grew 12% YoY and gross margin was 41%.',
-      sourceExcerpt: 'Revenue increased 12% year-over-year on a gross margin of 41%.'
-    });
 
-    expect(claims).toEqual([
-      { text: 'Revenue grew 12% YoY.', sourceExcerpt: 'Revenue increased 12% year-over-year' },
-      { text: 'Gross margin was 41%.', sourceExcerpt: 'Gross margin of 41%' }
-    ]);
-  });
+def test_parses_the_json_array_of_claims_returned_by_the_chat_function():
+    def fake_chat_fn(system, user):
+        return json.dumps(
+            [
+                {"text": "Revenue grew 12% YoY.", "source_excerpt": "Revenue increased 12% year-over-year"},
+                {"text": "Gross margin was 41%.", "source_excerpt": "Gross margin of 41%"},
+            ]
+        )
 
-  it('throws a clear error if the chat function does not return valid JSON', async () => {
-    const fakeChatFn = async () => 'not json';
-    await expect(
-      extractClaims(fakeChatFn, { generatedText: 'x', sourceExcerpt: 'y' })
-    ).rejects.toThrow('claim extraction returned invalid JSON');
-  });
-});
+    claims = extract_claims(
+        fake_chat_fn,
+        generated_text="Revenue grew 12% YoY and gross margin was 41%.",
+        source_excerpt="Revenue increased 12% year-over-year on a gross margin of 41%.",
+    )
+
+    assert claims == [
+        {"text": "Revenue grew 12% YoY.", "source_excerpt": "Revenue increased 12% year-over-year"},
+        {"text": "Gross margin was 41%.", "source_excerpt": "Gross margin of 41%"},
+    ]
+
+
+def test_raises_a_clear_error_if_the_chat_function_does_not_return_valid_json():
+    def fake_chat_fn(system, user):
+        return "not json"
+
+    with pytest.raises(ValueError, match="claim extraction returned invalid JSON"):
+        extract_claims(fake_chat_fn, generated_text="x", source_excerpt="y")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/eval/claimExtractor.test.ts`
-Expected: FAIL — `Cannot find module '../../src/eval/claimExtractor.js'`
+Run: `cd poc/server && pytest tests/eval/test_claim_extractor.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.eval.claim_extractor'`
 
-- [ ] **Step 3: Implement `poc/src/eval/claimExtractor.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/eval/claim_extractor.py`**
 
-```typescript
-import type { ChatFn } from '../llm/openaiClient.js';
+```python
+import json
+from research_authoring.llm.openai_client import ChatFn
 
-export interface ExtractedClaim {
-  text: string;
-  sourceExcerpt: string;
-}
-
-const SYSTEM_PROMPT = `You decompose generated financial-research text into atomic claims.
-Return ONLY a JSON array of objects: [{ "text": "...", "sourceExcerpt": "..." }].
+_SYSTEM_PROMPT = """You decompose generated financial-research text into atomic claims.
+Return ONLY a JSON array of objects: [{ "text": "...", "source_excerpt": "..." }].
 Each "text" is one atomic factual claim from the generated text.
-Each "sourceExcerpt" is the specific substring of the provided source excerpt that supports it.
-Do not include commentary, markdown, or explanation — JSON array only.`;
+Each "source_excerpt" is the specific substring of the provided source excerpt that supports it.
+Do not include commentary, markdown, or explanation — JSON array only."""
 
-export async function extractClaims(
-  chatFn: ChatFn,
-  params: { generatedText: string; sourceExcerpt: string }
-): Promise<ExtractedClaim[]> {
-  const raw = await chatFn({
-    system: SYSTEM_PROMPT,
-    user: `Generated text:\n${params.generatedText}\n\nSource excerpt:\n${params.sourceExcerpt}`
-  });
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('claim extraction returned invalid JSON');
-  }
+def extract_claims(chat_fn: ChatFn, *, generated_text: str, source_excerpt: str) -> list[dict]:
+    raw = chat_fn(
+        _SYSTEM_PROMPT,
+        f"Generated text:\n{generated_text}\n\nSource excerpt:\n{source_excerpt}",
+    )
 
-  if (!Array.isArray(parsed)) {
-    throw new Error('claim extraction returned invalid JSON');
-  }
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("claim extraction returned invalid JSON")
 
-  return parsed as ExtractedClaim[];
-}
+    if not isinstance(parsed, list):
+        raise ValueError("claim extraction returned invalid JSON")
+
+    return parsed
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/eval/claimExtractor.test.ts`
+Run: `cd poc/server && pytest tests/eval/test_claim_extractor.py -v`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/eval/claimExtractor.ts poc/tests/eval/claimExtractor.test.ts
+git add poc/server/src/research_authoring/eval/__init__.py poc/server/src/research_authoring/eval/claim_extractor.py poc/server/tests/eval/test_claim_extractor.py
 git commit -m "feat: add LLM-based claim extractor"
 ```
 
@@ -1235,110 +1417,100 @@ git commit -m "feat: add LLM-based claim extractor"
 ### Task 9: Groundedness eval engine
 
 **Files:**
-- Create: `poc/src/eval/groundednessEval.ts`
-- Test: `poc/tests/eval/groundednessEval.test.ts`
+- Create: `poc/server/src/research_authoring/eval/groundedness_eval.py`
+- Test: `poc/server/tests/eval/test_groundedness_eval.py`
 
 **Interfaces:**
 - Consumes: `ChatFn` from Task 7.
-- Produces: `evaluateClaimGroundedness(chatFn: ChatFn, params: { claimText: string; sourceExcerpt: string }): Promise<{ status: 'grounded' | 'unsupported' | 'conflicting'; score: number; rationale: string }>`. Task 12 (`run_eval`) consumes this.
+- Produces: `evaluate_claim_groundedness(chat_fn: ChatFn, *, claim_text: str, source_excerpt: str) -> dict` with keys `status` (`'grounded' | 'unsupported' | 'conflicting'`), `score` (float), `rationale` (str). Task 13 (`run_eval`) consumes this.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/eval/groundednessEval.test.ts
-import { describe, it, expect } from 'vitest';
-import { evaluateClaimGroundedness } from '../../src/eval/groundednessEval.js';
+```python
+# poc/server/tests/eval/test_groundedness_eval.py
+import json
+import pytest
+from research_authoring.eval.groundedness_eval import evaluate_claim_groundedness
 
-describe('evaluateClaimGroundedness', () => {
-  it('parses a grounded verdict from the chat function', async () => {
-    const fakeChatFn = async () =>
-      JSON.stringify({ status: 'grounded', score: 0.95, rationale: 'Matches source exactly.' });
 
-    const result = await evaluateClaimGroundedness(fakeChatFn, {
-      claimText: 'Consensus FY26 EPS is $7.42',
-      sourceExcerpt: 'FY26 EPS estimate: 7.42'
-    });
+def test_parses_a_grounded_verdict():
+    def fake_chat_fn(system, user):
+        return json.dumps({"status": "grounded", "score": 0.95, "rationale": "Matches source exactly."})
 
-    expect(result).toEqual({ status: 'grounded', score: 0.95, rationale: 'Matches source exactly.' });
-  });
+    result = evaluate_claim_groundedness(
+        fake_chat_fn, claim_text="Consensus FY26 EPS is $7.42", source_excerpt="FY26 EPS estimate: 7.42"
+    )
 
-  it('parses an unsupported verdict', async () => {
-    const fakeChatFn = async () =>
-      JSON.stringify({ status: 'unsupported', score: 0.2, rationale: 'Source excerpt does not mention this figure.' });
+    assert result == {"status": "grounded", "score": 0.95, "rationale": "Matches source exactly."}
 
-    const result = await evaluateClaimGroundedness(fakeChatFn, {
-      claimText: 'Revenue grew 30% YoY',
-      sourceExcerpt: 'FY26 EPS estimate: 7.42'
-    });
 
-    expect(result.status).toBe('unsupported');
-  });
+def test_parses_an_unsupported_verdict():
+    def fake_chat_fn(system, user):
+        return json.dumps(
+            {"status": "unsupported", "score": 0.2, "rationale": "Source excerpt does not mention this figure."}
+        )
 
-  it('throws a clear error on invalid JSON', async () => {
-    const fakeChatFn = async () => 'nonsense';
-    await expect(
-      evaluateClaimGroundedness(fakeChatFn, { claimText: 'x', sourceExcerpt: 'y' })
-    ).rejects.toThrow('groundedness eval returned invalid JSON');
-  });
-});
+    result = evaluate_claim_groundedness(
+        fake_chat_fn, claim_text="Revenue grew 30% YoY", source_excerpt="FY26 EPS estimate: 7.42"
+    )
+
+    assert result["status"] == "unsupported"
+
+
+def test_raises_a_clear_error_on_invalid_json():
+    def fake_chat_fn(system, user):
+        return "nonsense"
+
+    with pytest.raises(ValueError, match="groundedness eval returned invalid JSON"):
+        evaluate_claim_groundedness(fake_chat_fn, claim_text="x", source_excerpt="y")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/eval/groundednessEval.test.ts`
-Expected: FAIL — `Cannot find module '../../src/eval/groundednessEval.js'`
+Run: `cd poc/server && pytest tests/eval/test_groundedness_eval.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.eval.groundedness_eval'`
 
-- [ ] **Step 3: Implement `poc/src/eval/groundednessEval.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/eval/groundedness_eval.py`**
 
-```typescript
-import type { ChatFn } from '../llm/openaiClient.js';
+```python
+import json
+from research_authoring.llm.openai_client import ChatFn
 
-export interface GroundednessResult {
-  status: 'grounded' | 'unsupported' | 'conflicting';
-  score: number;
-  rationale: string;
-}
-
-const SYSTEM_PROMPT = `You are a fact-checking judge for sell-side investment research.
+_SYSTEM_PROMPT = """You are a fact-checking judge for sell-side investment research.
 Given a CLAIM and a SOURCE EXCERPT, decide if the claim is:
 - "grounded": fully supported by the source excerpt, including any numbers, entities, and time periods matching exactly
 - "unsupported": the source excerpt does not contain evidence for the claim
 - "conflicting": the source excerpt contradicts the claim (e.g. different number, entity, or period)
-Return ONLY JSON: { "status": "...", "score": <0-1 confidence>, "rationale": "<one sentence>" }`;
+Return ONLY JSON: { "status": "...", "score": <0-1 confidence>, "rationale": "<one sentence>" }"""
 
-export async function evaluateClaimGroundedness(
-  chatFn: ChatFn,
-  params: { claimText: string; sourceExcerpt: string }
-): Promise<GroundednessResult> {
-  const raw = await chatFn({
-    system: SYSTEM_PROMPT,
-    user: `CLAIM: ${params.claimText}\n\nSOURCE EXCERPT: ${params.sourceExcerpt}`
-  });
 
-  let parsed: any;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('groundedness eval returned invalid JSON');
-  }
+def evaluate_claim_groundedness(chat_fn: ChatFn, *, claim_text: str, source_excerpt: str) -> dict:
+    raw = chat_fn(_SYSTEM_PROMPT, f"CLAIM: {claim_text}\n\nSOURCE EXCERPT: {source_excerpt}")
 
-  if (!parsed || typeof parsed.status !== 'string' || typeof parsed.score !== 'number') {
-    throw new Error('groundedness eval returned invalid JSON');
-  }
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError("groundedness eval returned invalid JSON")
 
-  return { status: parsed.status, score: parsed.score, rationale: parsed.rationale ?? '' };
-}
+    if not isinstance(parsed, dict) or "status" not in parsed or "score" not in parsed:
+        raise ValueError("groundedness eval returned invalid JSON")
+
+    return {
+        "status": parsed["status"],
+        "score": parsed["score"],
+        "rationale": parsed.get("rationale", ""),
+    }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/eval/groundednessEval.test.ts`
+Run: `cd poc/server && pytest tests/eval/test_groundedness_eval.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/eval/groundednessEval.ts poc/tests/eval/groundednessEval.test.ts
+git add poc/server/src/research_authoring/eval/groundedness_eval.py poc/server/tests/eval/test_groundedness_eval.py
 git commit -m "feat: add LLM-judge groundedness eval"
 ```
 
@@ -1347,149 +1519,171 @@ git commit -m "feat: add LLM-judge groundedness eval"
 ### Task 10: FactSet client
 
 **Files:**
-- Create: `poc/src/factset/factsetClient.ts`
-- Test: `poc/tests/factset/factsetClient.test.ts`
+- Create: `poc/server/src/research_authoring/factset/__init__.py`
+- Create: `poc/server/src/research_authoring/factset/factset_client.py`
+- Test: `poc/server/tests/factset/test_factset_client.py`
 
 **Interfaces:**
-- Produces: `type FetchFn = typeof fetch`; `createFactsetClient(config: { clientId: string; clientSecret: string; baseUrl: string; fetchFn?: FetchFn }): { fetchFundamentals(ticker: string): Promise<{ ticker: string; raw: unknown; retrievedAt: string }> }`. Task 11 (`fetch_connector_data`) consumes this.
-- Note: FactSet's exact OAuth token endpoint path and fundamentals endpoint path depend on your organization's specific FactSet API subscription/product tier. This task implements the standard OAuth2 client-credentials flow and a configurable base URL; **before running against production FactSet, confirm the exact token and fundamentals endpoint paths from your FactSet API documentation/account team** and adjust the two path constants noted in Step 3.
+- Produces: `create_factset_client(client_id: str, client_secret: str, base_url: str, post_fn=requests.post, get_fn=requests.get) -> FactsetClient`, where `FactsetClient.fetch_fundamentals(ticker: str) -> FundamentalsResult` (`FundamentalsResult` has `ticker`, `raw`, `retrieved_at`). Task 11 (`fetch_connector_data`) consumes this.
+- Note: FactSet's exact OAuth token endpoint path and fundamentals endpoint path depend on your organization's specific FactSet API subscription/product tier. This task implements the standard OAuth2 client-credentials flow with a configurable base URL; **before running against production FactSet, confirm the exact token and fundamentals endpoint paths from your FactSet API documentation/account team** and adjust the two path constants noted in Step 3.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create `poc/server/src/research_authoring/factset/__init__.py`** (empty)
 
-```typescript
-// poc/tests/factset/factsetClient.test.ts
-import { describe, it, expect, vi } from 'vitest';
-import { createFactsetClient } from '../../src/factset/factsetClient.js';
+- [ ] **Step 2: Write the failing test**
 
-describe('createFactsetClient', () => {
-  it('fetches an OAuth2 token then requests fundamentals with a bearer header', async () => {
-    const fetchFn = vi
-      .fn()
-      // 1st call: token endpoint
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ access_token: 'test-token', expires_in: 3600 })
-      })
-      // 2nd call: fundamentals endpoint
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: [{ ticker: 'AAPL', epsEstimateFY26: 7.42 }] })
-      });
+```python
+# poc/server/tests/factset/test_factset_client.py
+import pytest
+from research_authoring.factset.factset_client import create_factset_client
 
-    const client = createFactsetClient({
-      clientId: 'test-id',
-      clientSecret: 'test-secret',
-      baseUrl: 'https://api.factset.example',
-      fetchFn: fetchFn as any
-    });
 
-    const result = await client.fetchFundamentals('AAPL');
+class FakeResponse:
+    def __init__(self, status_code, json_body):
+        self.status_code = status_code
+        self._json_body = json_body
 
-    expect(fetchFn).toHaveBeenNthCalledWith(
-      1,
-      'https://api.factset.example/oauth/token',
-      expect.objectContaining({ method: 'POST' })
-    );
-    expect(fetchFn).toHaveBeenNthCalledWith(
-      2,
-      'https://api.factset.example/fundamentals/v1/AAPL',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer test-token' })
-      })
-    );
-    expect(result.ticker).toBe('AAPL');
-    expect(result.raw).toEqual({ data: [{ ticker: 'AAPL', epsEstimateFY26: 7.42 }] });
-    expect(result.retrievedAt).toBeTruthy();
-  });
+    def json(self):
+        return self._json_body
 
-  it('throws a clear error when the token request fails', async () => {
-    const fetchFn = vi.fn().mockResolvedValueOnce({ ok: false, status: 401 });
-    const client = createFactsetClient({
-      clientId: 'bad-id',
-      clientSecret: 'bad-secret',
-      baseUrl: 'https://api.factset.example',
-      fetchFn: fetchFn as any
-    });
-    await expect(client.fetchFundamentals('AAPL')).rejects.toThrow('FactSet OAuth token request failed: 401');
-  });
-});
+
+def test_fetches_an_oauth2_token_then_requests_fundamentals_with_a_bearer_header():
+    post_calls = []
+    get_calls = []
+
+    def fake_post(url, data=None, **kwargs):
+        post_calls.append((url, data))
+        return FakeResponse(200, {"access_token": "test-token", "expires_in": 3600})
+
+    def fake_get(url, headers=None, **kwargs):
+        get_calls.append((url, headers))
+        return FakeResponse(200, {"data": [{"ticker": "AAPL", "epsEstimateFY26": 7.42}]})
+
+    client = create_factset_client(
+        client_id="test-id",
+        client_secret="test-secret",
+        base_url="https://api.factset.example",
+        post_fn=fake_post,
+        get_fn=fake_get,
+    )
+
+    result = client.fetch_fundamentals("AAPL")
+
+    assert post_calls[0][0] == "https://api.factset.example/oauth/token"
+    assert get_calls[0][0] == "https://api.factset.example/fundamentals/v1/AAPL"
+    assert get_calls[0][1] == {"Authorization": "Bearer test-token"}
+    assert result.ticker == "AAPL"
+    assert result.raw == {"data": [{"ticker": "AAPL", "epsEstimateFY26": 7.42}]}
+    assert result.retrieved_at
+
+
+def test_raises_a_clear_error_when_the_token_request_fails():
+    def fake_post(url, data=None, **kwargs):
+        return FakeResponse(401, {})
+
+    def fake_get(url, headers=None, **kwargs):
+        raise AssertionError("should not be called when token request fails")
+
+    client = create_factset_client(
+        client_id="bad-id",
+        client_secret="bad-secret",
+        base_url="https://api.factset.example",
+        post_fn=fake_post,
+        get_fn=fake_get,
+    )
+
+    with pytest.raises(RuntimeError, match="FactSet OAuth token request failed: 401"):
+        client.fetch_fundamentals("AAPL")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/factset/factsetClient.test.ts`
-Expected: FAIL — `Cannot find module '../../src/factset/factsetClient.js'`
+Run: `cd poc/server && pytest tests/factset/test_factset_client.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.factset.factset_client'`
 
-- [ ] **Step 3: Implement `poc/src/factset/factsetClient.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/factset/factset_client.py`**
 
-```typescript
-export interface FactsetClientConfig {
-  clientId: string;
-  clientSecret: string;
-  baseUrl: string;
-  fetchFn?: typeof fetch;
-}
+```python
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Callable
+import requests
 
-export interface FundamentalsResult {
-  ticker: string;
-  raw: unknown;
-  retrievedAt: string;
-}
+# NOTE: confirm these two path constants against your FactSet API/MCP
+# subscription's actual documentation before pointing this at production.
+_TOKEN_PATH = "/oauth/token"
+_FUNDAMENTALS_PATH = "/fundamentals/v1"
 
-// NOTE: confirm these two path constants against your FactSet API/MCP
-// subscription's actual documentation before pointing this at production.
-const TOKEN_PATH = '/oauth/token';
-const FUNDAMENTALS_PATH = '/fundamentals/v1';
 
-export function createFactsetClient(config: FactsetClientConfig) {
-  const fetchFn = config.fetchFn ?? fetch;
+@dataclass
+class FundamentalsResult:
+    ticker: str
+    raw: object
+    retrieved_at: str
 
-  async function getAccessToken(): Promise<string> {
-    const response = await fetchFn(`${config.baseUrl}${TOKEN_PATH}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: config.clientId,
-        client_secret: config.clientSecret
-      }).toString()
-    } as any);
 
-    if (!response.ok) {
-      throw new Error(`FactSet OAuth token request failed: ${response.status}`);
-    }
-    const body = await response.json();
-    return body.access_token;
-  }
+class FactsetClient:
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        base_url: str,
+        post_fn: Callable = requests.post,
+        get_fn: Callable = requests.get,
+    ):
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._base_url = base_url
+        self._post_fn = post_fn
+        self._get_fn = get_fn
 
-  return {
-    async fetchFundamentals(ticker: string): Promise<FundamentalsResult> {
-      const token = await getAccessToken();
-      const response = await fetchFn(`${config.baseUrl}${FUNDAMENTALS_PATH}/${ticker}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      } as any);
+    def _get_access_token(self) -> str:
+        response = self._post_fn(
+            f"{self._base_url}{_TOKEN_PATH}",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": self._client_id,
+                "client_secret": self._client_secret,
+            },
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"FactSet OAuth token request failed: {response.status_code}")
+        return response.json()["access_token"]
 
-      if (!response.ok) {
-        throw new Error(`FactSet fundamentals request failed: ${response.status}`);
-      }
+    def fetch_fundamentals(self, ticker: str) -> FundamentalsResult:
+        token = self._get_access_token()
+        response = self._get_fn(
+            f"{self._base_url}{_FUNDAMENTALS_PATH}/{ticker}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"FactSet fundamentals request failed: {response.status_code}")
+        return FundamentalsResult(
+            ticker=ticker,
+            raw=response.json(),
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+        )
 
-      const raw = await response.json();
-      return { ticker, raw, retrievedAt: new Date().toISOString() };
-    }
-  };
-}
+
+def create_factset_client(
+    client_id: str,
+    client_secret: str,
+    base_url: str,
+    post_fn: Callable = requests.post,
+    get_fn: Callable = requests.get,
+) -> FactsetClient:
+    return FactsetClient(client_id, client_secret, base_url, post_fn, get_fn)
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/factset/factsetClient.test.ts`
+Run: `cd poc/server && pytest tests/factset/test_factset_client.py -v`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/factset/factsetClient.ts poc/tests/factset/factsetClient.test.ts
-git commit -m "feat: add FactSet OAuth2 client with injectable fetch"
+git add poc/server/src/research_authoring/factset/__init__.py poc/server/src/research_authoring/factset/factset_client.py poc/server/tests/factset/test_factset_client.py
+git commit -m "feat: add FactSet OAuth2 client with injectable post/get functions"
 ```
 
 ---
@@ -1497,166 +1691,174 @@ git commit -m "feat: add FactSet OAuth2 client with injectable fetch"
 ### Task 11: Tools — `ingest_document` and `fetch_connector_data`
 
 **Files:**
-- Create: `poc/src/tools/ingestDocument.ts`
-- Create: `poc/src/tools/fetchFactsetData.ts`
-- Test: `poc/tests/tools/ingestAndFactset.test.ts`
+- Create: `poc/server/src/research_authoring/tools/__init__.py`
+- Create: `poc/server/src/research_authoring/tools/ingest_document.py`
+- Create: `poc/server/src/research_authoring/tools/fetch_factset_data.py`
+- Test: `poc/server/tests/tools/test_ingest_and_factset.py`
 
 **Interfaces:**
-- Consumes: `createSource` (Task 3), `writeAuditEntry` (Task 6), `createFactsetClient` return type (Task 10).
-- Produces: `ingestDocument(db, input: { retrievedBy: string; context: string; rawContentRef: string; externalUrl?: string }): Source`; `fetchConnectorData(db, factsetClient, input: { retrievedBy: string; ticker: string }): Promise<Source>`. Task 12 (`synthesize_artefact`) consumes `Source` objects these produce.
+- Consumes: `create_source` (Task 3), `write_audit_entry` (Task 6), `FactsetClient`-shaped object (Task 10, duck-typed with `fetch_fundamentals`).
+- Produces: `ingest_document(db, *, retrieved_by, context, raw_content_ref, external_url=None) -> Source`; `fetch_connector_data(db, factset_client, *, retrieved_by, ticker) -> Source`. Task 12 (`synthesize_artefact`) consumes `Source` objects these produce.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Create `poc/server/src/research_authoring/tools/__init__.py`** (empty)
 
-```typescript
-// poc/tests/tools/ingestAndFactset.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { getAuditTrailForTarget } from '../../src/db/auditRepository.js';
-import { ingestDocument } from '../../src/tools/ingestDocument.js';
-import { fetchConnectorData } from '../../src/tools/fetchFactsetData.js';
+- [ ] **Step 2: Write the failing test**
 
-const TEST_DB_PATH = './data/test-ingest.db';
-let db: ReturnType<typeof createDb>;
+```python
+# poc/server/tests/tools/test_ingest_and_factset.py
+import json
+from research_authoring.db.connection import create_db
+from research_authoring.db.audit_repository import get_audit_trail_for_target
+from research_authoring.tools.ingest_document import ingest_document
+from research_authoring.tools.fetch_factset_data import fetch_connector_data
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
 
-describe('ingestDocument', () => {
-  it('creates an upload source and an audit entry', () => {
-    const source = ingestDocument(db, {
-      retrievedBy: 'analyst-1',
-      context: 'Q2 10-Q upload',
-      rawContentRef: 'blob://uploads/q2-10q.pdf'
-    });
-    expect(source.type).toBe('upload');
+def test_ingest_document_creates_an_upload_source_and_an_audit_entry(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
 
-    const trail = getAuditTrailForTarget(db, 'source', source.id);
-    expect(trail).toHaveLength(1);
-    expect(trail[0].action).toBe('ingest_document');
-  });
-});
+    source = ingest_document(
+        db,
+        retrieved_by="analyst-1",
+        context="Q2 10-Q upload",
+        raw_content_ref="blob://uploads/q2-10q.pdf",
+    )
+    assert source.type == "upload"
 
-describe('fetchConnectorData', () => {
-  it('fetches FactSet fundamentals and stores them as a connector source with an audit entry', async () => {
-    const fakeFactsetClient = {
-      fetchFundamentals: async (ticker: string) => ({
-        ticker,
-        raw: { epsEstimateFY26: 7.42 },
-        retrievedAt: '2026-07-24T12:00:00Z'
-      })
-    };
+    trail = get_audit_trail_for_target(db, "source", source.id)
+    assert len(trail) == 1
+    assert trail[0].action == "ingest_document"
 
-    const source = await fetchConnectorData(db, fakeFactsetClient, {
-      retrievedBy: 'analyst-1',
-      ticker: 'AAPL'
-    });
 
-    expect(source.type).toBe('connector:factset');
-    expect(source.context).toContain('AAPL');
-    expect(JSON.parse(source.rawContentRef)).toEqual({ epsEstimateFY26: 7.42 });
+def test_fetch_connector_data_fetches_factset_fundamentals_and_stores_as_a_connector_source(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
 
-    const trail = getAuditTrailForTarget(db, 'source', source.id);
-    expect(trail).toHaveLength(1);
-    expect(trail[0].action).toBe('fetch_connector_data');
-  });
-});
+    class FakeFactsetClient:
+        def fetch_fundamentals(self, ticker):
+            class Result:
+                pass
+
+            r = Result()
+            r.ticker = ticker
+            r.raw = {"epsEstimateFY26": 7.42}
+            r.retrieved_at = "2026-07-24T12:00:00Z"
+            return r
+
+    source = fetch_connector_data(db, FakeFactsetClient(), retrieved_by="analyst-1", ticker="AAPL")
+
+    assert source.type == "connector:factset"
+    assert "AAPL" in source.context
+    assert json.loads(source.raw_content_ref) == {"epsEstimateFY26": 7.42}
+
+    trail = get_audit_trail_for_target(db, "source", source.id)
+    assert len(trail) == 1
+    assert trail[0].action == "fetch_connector_data"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/ingestAndFactset.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/ingestDocument.js'`
+Run: `cd poc/server && pytest tests/tools/test_ingest_and_factset.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.ingest_document'`
 
-- [ ] **Step 3: Implement `poc/src/tools/ingestDocument.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/tools/ingest_document.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { createSource } from '../db/sourceRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Source } from '../db/types.js';
+```python
+import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
+from research_authoring.db.source_repository import create_source
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Source
 
-export function ingestDocument(
-  db: Database.Database,
-  input: { retrievedBy: string; context: string; rawContentRef: string; externalUrl?: string }
-): Source {
-  const source = createSource(db, {
-    type: 'upload',
-    retrievedAt: new Date().toISOString(),
-    retrievedBy: input.retrievedBy,
-    context: input.context,
-    rawContentRef: input.rawContentRef,
-    externalUrl: input.externalUrl ?? null
-  });
 
-  writeAuditEntry(db, {
-    actor: input.retrievedBy,
-    action: 'ingest_document',
-    targetType: 'source',
-    targetId: source.id,
-    targetVersion: null,
-    evalRunId: null,
-    diff: null
-  });
+def ingest_document(
+    db: sqlite3.Connection,
+    *,
+    retrieved_by: str,
+    context: str,
+    raw_content_ref: str,
+    external_url: Optional[str] = None,
+) -> Source:
+    source = create_source(
+        db,
+        type="upload",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+        retrieved_by=retrieved_by,
+        context=context,
+        raw_content_ref=raw_content_ref,
+        external_url=external_url,
+    )
 
-  return source;
-}
+    write_audit_entry(
+        db,
+        actor=retrieved_by,
+        action="ingest_document",
+        target_type="source",
+        target_id=source.id,
+        target_version=None,
+        eval_run_id=None,
+        diff=None,
+    )
+
+    return source
 ```
 
-- [ ] **Step 4: Implement `poc/src/tools/fetchFactsetData.ts`**
+- [ ] **Step 5: Implement `poc/server/src/research_authoring/tools/fetch_factset_data.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { createSource } from '../db/sourceRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Source } from '../db/types.js';
+```python
+import json
+import sqlite3
+from typing import Protocol
+from research_authoring.db.source_repository import create_source
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Source
 
-export interface FactsetClientLike {
-  fetchFundamentals(ticker: string): Promise<{ ticker: string; raw: unknown; retrievedAt: string }>;
-}
 
-export async function fetchConnectorData(
-  db: Database.Database,
-  factsetClient: FactsetClientLike,
-  input: { retrievedBy: string; ticker: string }
-): Promise<Source> {
-  const result = await factsetClient.fetchFundamentals(input.ticker);
+class FactsetClientLike(Protocol):
+    def fetch_fundamentals(self, ticker: str): ...
 
-  const source = createSource(db, {
-    type: 'connector:factset',
-    retrievedAt: result.retrievedAt,
-    retrievedBy: input.retrievedBy,
-    context: `FactSet fundamentals for ${input.ticker}`,
-    rawContentRef: JSON.stringify(result.raw),
-    externalUrl: null
-  });
 
-  writeAuditEntry(db, {
-    actor: input.retrievedBy,
-    action: 'fetch_connector_data',
-    targetType: 'source',
-    targetId: source.id,
-    targetVersion: null,
-    evalRunId: null,
-    diff: null
-  });
+def fetch_connector_data(
+    db: sqlite3.Connection,
+    factset_client: FactsetClientLike,
+    *,
+    retrieved_by: str,
+    ticker: str,
+) -> Source:
+    result = factset_client.fetch_fundamentals(ticker)
 
-  return source;
-}
+    source = create_source(
+        db,
+        type="connector:factset",
+        retrieved_at=result.retrieved_at,
+        retrieved_by=retrieved_by,
+        context=f"FactSet fundamentals for {ticker}",
+        raw_content_ref=json.dumps(result.raw),
+        external_url=None,
+    )
+
+    write_audit_entry(
+        db,
+        actor=retrieved_by,
+        action="fetch_connector_data",
+        target_type="source",
+        target_id=source.id,
+        target_version=None,
+        eval_run_id=None,
+        diff=None,
+    )
+
+    return source
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 6: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/ingestAndFactset.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_ingest_and_factset.py -v`
 Expected: PASS (2 tests)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add poc/src/tools/ingestDocument.ts poc/src/tools/fetchFactsetData.ts poc/tests/tools/ingestAndFactset.test.ts
+git add poc/server/src/research_authoring/tools/__init__.py poc/server/src/research_authoring/tools/ingest_document.py poc/server/src/research_authoring/tools/fetch_factset_data.py poc/server/tests/tools/test_ingest_and_factset.py
 git commit -m "feat: add ingest_document and fetch_connector_data tools"
 ```
 
@@ -1665,134 +1867,135 @@ git commit -m "feat: add ingest_document and fetch_connector_data tools"
 ### Task 12: Tool — `synthesize_artefact`
 
 **Files:**
-- Create: `poc/src/tools/synthesizeArtefact.ts`
-- Test: `poc/tests/tools/synthesizeArtefact.test.ts`
+- Create: `poc/server/src/research_authoring/tools/synthesize_artefact.py`
+- Test: `poc/server/tests/tools/test_synthesize_artefact.py`
 
 **Interfaces:**
-- Consumes: `extractClaims` (Task 8), `createClaim` (Task 3), `createArtefact` (Task 4), `writeAuditEntry` (Task 6), `Source` (Task 3).
-- Produces: `synthesizeArtefact(db, chatFn, input: { actor: string; type: Artefact['type']; generatedText: string; source: Source }): Promise<Artefact>`. Task 13 (`run_eval`) consumes the returned `Artefact`.
+- Consumes: `extract_claims` (Task 8), `create_claim` (Task 3), `create_artefact` (Task 4), `write_audit_entry` (Task 6), `Source` (Task 3), `ChatFn` (Task 7).
+- Produces: `synthesize_artefact(db, chat_fn, *, actor, type, generated_text, source) -> Artefact`. Task 13 (`run_eval`) consumes the returned `Artefact`.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/tools/synthesizeArtefact.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createSource } from '../../src/db/sourceRepository.js';
-import { getAuditTrailForTarget } from '../../src/db/auditRepository.js';
-import { synthesizeArtefact } from '../../src/tools/synthesizeArtefact.js';
+```python
+# poc/server/tests/tools/test_synthesize_artefact.py
+import json
+from research_authoring.db.connection import create_db
+from research_authoring.db.source_repository import create_source
+from research_authoring.db.audit_repository import get_audit_trail_for_target
+from research_authoring.tools.synthesize_artefact import synthesize_artefact
 
-const TEST_DB_PATH = './data/test-synthesize.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_extracts_claims_persists_them_linked_to_the_source_and_creates_a_draft_artefact(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    source = create_source(
+        db,
+        type="connector:factset",
+        retrieved_at="2026-07-24T12:00:00Z",
+        retrieved_by="analyst-1",
+        context="FactSet fundamentals for AAPL",
+        raw_content_ref=json.dumps({"epsEstimateFY26": 7.42}),
+        external_url=None,
+    )
 
-describe('synthesizeArtefact', () => {
-  it('extracts claims, persists them linked to the source, and creates a draft artefact', async () => {
-    const source = createSource(db, {
-      type: 'connector:factset',
-      retrievedAt: '2026-07-24T12:00:00Z',
-      retrievedBy: 'analyst-1',
-      context: 'FactSet fundamentals for AAPL',
-      rawContentRef: JSON.stringify({ epsEstimateFY26: 7.42 }),
-      externalUrl: null
-    });
+    def fake_chat_fn(system, user):
+        return json.dumps(
+            [{"text": "Consensus FY26 EPS is $7.42", "source_excerpt": "epsEstimateFY26: 7.42"}]
+        )
 
-    const fakeChatFn = async () =>
-      JSON.stringify([{ text: 'Consensus FY26 EPS is $7.42', sourceExcerpt: 'epsEstimateFY26: 7.42' }]);
+    artefact = synthesize_artefact(
+        db,
+        fake_chat_fn,
+        actor="analyst-1",
+        type="data_extract",
+        generated_text="Consensus FY26 EPS is $7.42",
+        source=source,
+    )
 
-    const artefact = await synthesizeArtefact(db, fakeChatFn, {
-      actor: 'analyst-1',
-      type: 'data_extract',
-      generatedText: 'Consensus FY26 EPS is $7.42',
-      source
-    });
+    assert artefact.status == "draft"
+    assert artefact.version == 1
+    assert len(artefact.claim_ids) == 1
 
-    expect(artefact.status).toBe('draft');
-    expect(artefact.version).toBe(1);
-    expect(artefact.claimIds).toHaveLength(1);
-
-    const trail = getAuditTrailForTarget(db, 'artefact', artefact.id);
-    expect(trail).toHaveLength(1);
-    expect(trail[0].action).toBe('synthesize_artefact');
-  });
-});
+    trail = get_audit_trail_for_target(db, "artefact", artefact.id)
+    assert len(trail) == 1
+    assert trail[0].action == "synthesize_artefact"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/synthesizeArtefact.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/synthesizeArtefact.js'`
+Run: `cd poc/server && pytest tests/tools/test_synthesize_artefact.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.synthesize_artefact'`
 
-- [ ] **Step 3: Implement `poc/src/tools/synthesizeArtefact.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/synthesize_artefact.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import type { ChatFn } from '../llm/openaiClient.js';
-import { extractClaims } from '../eval/claimExtractor.js';
-import { createClaim } from '../db/claimRepository.js';
-import { createArtefact } from '../db/artefactRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Artefact, Source } from '../db/types.js';
+```python
+import sqlite3
+from research_authoring.llm.openai_client import ChatFn
+from research_authoring.eval.claim_extractor import extract_claims
+from research_authoring.db.claim_repository import create_claim
+from research_authoring.db.artefact_repository import create_artefact
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Artefact, Source
 
-export async function synthesizeArtefact(
-  db: Database.Database,
-  chatFn: ChatFn,
-  input: { actor: string; type: Artefact['type']; generatedText: string; source: Source }
-): Promise<Artefact> {
-  const extracted = await extractClaims(chatFn, {
-    generatedText: input.generatedText,
-    sourceExcerpt: input.source.rawContentRef
-  });
 
-  const claims = extracted.map((c) =>
-    createClaim(db, {
-      text: c.text,
-      sourceId: input.source.id,
-      sourceExcerpt: c.sourceExcerpt,
-      evalStatus: 'pending',
-      evalScore: null,
-      evalRunId: null
-    })
-  );
+def synthesize_artefact(
+    db: sqlite3.Connection,
+    chat_fn: ChatFn,
+    *,
+    actor: str,
+    type: str,
+    generated_text: str,
+    source: Source,
+) -> Artefact:
+    extracted = extract_claims(
+        chat_fn, generated_text=generated_text, source_excerpt=source.raw_content_ref
+    )
 
-  const artefact = createArtefact(db, {
-    type: input.type,
-    content: input.generatedText,
-    claimIds: claims.map((c) => c.id),
-    status: 'draft',
-    approvedBy: null,
-    approvedAt: null
-  });
+    claims = [
+        create_claim(
+            db,
+            text=c["text"],
+            source_id=source.id,
+            source_excerpt=c["source_excerpt"],
+            eval_status="pending",
+            eval_score=None,
+            eval_run_id=None,
+        )
+        for c in extracted
+    ]
 
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'synthesize_artefact',
-    targetType: 'artefact',
-    targetId: artefact.id,
-    targetVersion: artefact.version,
-    evalRunId: null,
-    diff: null
-  });
+    artefact = create_artefact(
+        db,
+        type=type,
+        content=generated_text,
+        claim_ids=[c.id for c in claims],
+        status="draft",
+        approved_by=None,
+        approved_at=None,
+    )
 
-  return artefact;
-}
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="synthesize_artefact",
+        target_type="artefact",
+        target_id=artefact.id,
+        target_version=artefact.version,
+        eval_run_id=None,
+        diff=None,
+    )
+
+    return artefact
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/synthesizeArtefact.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_synthesize_artefact.py -v`
 Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/tools/synthesizeArtefact.ts poc/tests/tools/synthesizeArtefact.test.ts
+git add poc/server/src/research_authoring/tools/synthesize_artefact.py poc/server/tests/tools/test_synthesize_artefact.py
 git commit -m "feat: add synthesize_artefact tool"
 ```
 
@@ -1801,159 +2004,155 @@ git commit -m "feat: add synthesize_artefact tool"
 ### Task 13: Tool — `run_eval`
 
 **Files:**
-- Create: `poc/src/tools/runEval.ts`
-- Test: `poc/tests/tools/runEval.test.ts`
+- Create: `poc/server/src/research_authoring/tools/run_eval.py`
+- Test: `poc/server/tests/tools/test_run_eval.py`
 
 **Interfaces:**
-- Consumes: `evaluateClaimGroundedness` (Task 9), `getClaim`/`updateClaimEval` (Task 3), `getLatestArtefact`/`createArtefactVersion` (Task 4), `writeAuditEntry` (Task 6).
-- Produces: `runEval(db, chatFn, input: { actor: string; artefactId: string }): Promise<{ artefact: Artefact; evalRunId: string }>` — evaluates every claim on the artefact's latest version, moves the artefact to `pending_approval` if all claims are grounded, or leaves it `draft` (with claims flagged) if any are unsupported/conflicting. Task 14 (`approve_artefact`) consumes the returned `Artefact`.
+- Consumes: `evaluate_claim_groundedness` (Task 9), `get_claim`/`update_claim_eval` (Task 3), `get_latest_artefact`/`create_artefact_version` (Task 4), `write_audit_entry` (Task 6).
+- Produces: `run_eval(db, chat_fn, *, actor, artefact_id) -> tuple[Artefact, str]` (artefact, eval_run_id) — evaluates every claim on the artefact's latest version, moves the artefact to `pending_approval` if all claims are grounded, or leaves it `draft` (with claims flagged) if any are unsupported/conflicting. Task 14 (`approve_artefact`) consumes the returned `Artefact`.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/tools/runEval.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createSource } from '../../src/db/sourceRepository.js';
-import { createClaim, getClaim } from '../../src/db/claimRepository.js';
-import { createArtefact } from '../../src/db/artefactRepository.js';
-import { getAuditTrailForTarget } from '../../src/db/auditRepository.js';
-import { runEval } from '../../src/tools/runEval.js';
+```python
+# poc/server/tests/tools/test_run_eval.py
+import json
+from research_authoring.db.connection import create_db
+from research_authoring.db.source_repository import create_source
+from research_authoring.db.claim_repository import create_claim, get_claim
+from research_authoring.db.artefact_repository import create_artefact
+from research_authoring.db.audit_repository import get_audit_trail_for_target
+from research_authoring.tools.run_eval import run_eval
 
-const TEST_DB_PATH = './data/test-runeval.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def _setup_artefact_with_claim(db, grounded: bool):
+    source = create_source(
+        db,
+        type="connector:factset",
+        retrieved_at="2026-07-24T12:00:00Z",
+        retrieved_by="analyst-1",
+        context="FactSet fundamentals for AAPL",
+        raw_content_ref="epsEstimateFY26: 7.42",
+        external_url=None,
+    )
+    claim = create_claim(
+        db,
+        text="Consensus FY26 EPS is $7.42" if grounded else "Revenue grew 30% YoY",
+        source_id=source.id,
+        source_excerpt="epsEstimateFY26: 7.42",
+        eval_status="pending",
+        eval_score=None,
+        eval_run_id=None,
+    )
+    artefact = create_artefact(
+        db,
+        type="data_extract",
+        content=claim.text,
+        claim_ids=[claim.id],
+        status="draft",
+        approved_by=None,
+        approved_at=None,
+    )
+    return artefact, claim
 
-function setupArtefactWithClaims(grounded: boolean) {
-  const source = createSource(db, {
-    type: 'connector:factset',
-    retrievedAt: '2026-07-24T12:00:00Z',
-    retrievedBy: 'analyst-1',
-    context: 'FactSet fundamentals for AAPL',
-    rawContentRef: 'epsEstimateFY26: 7.42',
-    externalUrl: null
-  });
-  const claim = createClaim(db, {
-    text: grounded ? 'Consensus FY26 EPS is $7.42' : 'Revenue grew 30% YoY',
-    sourceId: source.id,
-    sourceExcerpt: 'epsEstimateFY26: 7.42',
-    evalStatus: 'pending',
-    evalScore: null,
-    evalRunId: null
-  });
-  const artefact = createArtefact(db, {
-    type: 'data_extract',
-    content: claim.text,
-    claimIds: [claim.id],
-    status: 'draft',
-    approvedBy: null,
-    approvedAt: null
-  });
-  return { artefact, claim };
-}
 
-describe('runEval', () => {
-  it('moves the artefact to pending_approval when all claims are grounded', async () => {
-    const { artefact, claim } = setupArtefactWithClaims(true);
-    const fakeChatFn = async () =>
-      JSON.stringify({ status: 'grounded', score: 0.9, rationale: 'Matches.' });
+def test_moves_the_artefact_to_pending_approval_when_all_claims_are_grounded(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    artefact, claim = _setup_artefact_with_claim(db, grounded=True)
 
-    const result = await runEval(db, fakeChatFn, { actor: 'analyst-1', artefactId: artefact.id });
+    def fake_chat_fn(system, user):
+        return json.dumps({"status": "grounded", "score": 0.9, "rationale": "Matches."})
 
-    expect(result.artefact.status).toBe('pending_approval');
-    expect(result.artefact.version).toBe(2);
-    expect(getClaim(db, claim.id)?.evalStatus).toBe('grounded');
+    updated_artefact, eval_run_id = run_eval(db, fake_chat_fn, actor="analyst-1", artefact_id=artefact.id)
 
-    const trail = getAuditTrailForTarget(db, 'artefact', artefact.id);
-    expect(trail.some((e) => e.action === 'run_eval')).toBe(true);
-  });
+    assert updated_artefact.status == "pending_approval"
+    assert updated_artefact.version == 2
+    assert get_claim(db, claim.id).eval_status == "grounded"
 
-  it('keeps the artefact in draft when a claim is unsupported', async () => {
-    const { artefact, claim } = setupArtefactWithClaims(false);
-    const fakeChatFn = async () =>
-      JSON.stringify({ status: 'unsupported', score: 0.2, rationale: 'No evidence.' });
+    trail = get_audit_trail_for_target(db, "artefact", artefact.id)
+    assert any(e.action == "run_eval" for e in trail)
 
-    const result = await runEval(db, fakeChatFn, { actor: 'analyst-1', artefactId: artefact.id });
 
-    expect(result.artefact.status).toBe('draft');
-    expect(getClaim(db, claim.id)?.evalStatus).toBe('unsupported');
-  });
-});
+def test_keeps_the_artefact_in_draft_when_a_claim_is_unsupported(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    artefact, claim = _setup_artefact_with_claim(db, grounded=False)
+
+    def fake_chat_fn(system, user):
+        return json.dumps({"status": "unsupported", "score": 0.2, "rationale": "No evidence."})
+
+    updated_artefact, _eval_run_id = run_eval(db, fake_chat_fn, actor="analyst-1", artefact_id=artefact.id)
+
+    assert updated_artefact.status == "draft"
+    assert get_claim(db, claim.id).eval_status == "unsupported"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/runEval.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/runEval.js'`
+Run: `cd poc/server && pytest tests/tools/test_run_eval.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.run_eval'`
 
-- [ ] **Step 3: Implement `poc/src/tools/runEval.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/run_eval.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import type { ChatFn } from '../llm/openaiClient.js';
-import { evaluateClaimGroundedness } from '../eval/groundednessEval.js';
-import { getClaim, updateClaimEval } from '../db/claimRepository.js';
-import { getLatestArtefact, createArtefactVersion } from '../db/artefactRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Artefact } from '../db/types.js';
+```python
+import json
+import sqlite3
+import uuid
+from research_authoring.llm.openai_client import ChatFn
+from research_authoring.eval.groundedness_eval import evaluate_claim_groundedness
+from research_authoring.db.claim_repository import get_claim, update_claim_eval
+from research_authoring.db.artefact_repository import get_latest_artefact, create_artefact_version
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Artefact
 
-export async function runEval(
-  db: Database.Database,
-  chatFn: ChatFn,
-  input: { actor: string; artefactId: string }
-): Promise<{ artefact: Artefact; evalRunId: string }> {
-  const artefact = getLatestArtefact(db, input.artefactId);
-  if (!artefact) throw new Error(`Artefact ${input.artefactId} not found`);
 
-  const evalRunId = randomUUID();
-  let allGrounded = true;
+def run_eval(
+    db: sqlite3.Connection, chat_fn: ChatFn, *, actor: str, artefact_id: str
+) -> tuple[Artefact, str]:
+    artefact = get_latest_artefact(db, artefact_id)
+    if artefact is None:
+        raise ValueError(f"Artefact {artefact_id} not found")
 
-  for (const claimId of artefact.claimIds) {
-    const claim = getClaim(db, claimId);
-    if (!claim) throw new Error(`Claim ${claimId} not found`);
+    eval_run_id = str(uuid.uuid4())
+    all_grounded = True
 
-    const verdict = await evaluateClaimGroundedness(chatFn, {
-      claimText: claim.text,
-      sourceExcerpt: claim.sourceExcerpt
-    });
-    updateClaimEval(db, claim.id, verdict.status, verdict.score, evalRunId);
-    if (verdict.status !== 'grounded') allGrounded = false;
-  }
+    for claim_id in artefact.claim_ids:
+        claim = get_claim(db, claim_id)
+        if claim is None:
+            raise ValueError(f"Claim {claim_id} not found")
 
-  const updatedArtefact = createArtefactVersion(db, artefact.id, {
-    status: allGrounded ? 'pending_approval' : 'draft'
-  });
+        verdict = evaluate_claim_groundedness(
+            chat_fn, claim_text=claim.text, source_excerpt=claim.source_excerpt
+        )
+        update_claim_eval(db, claim.id, verdict["status"], verdict["score"], eval_run_id)
+        if verdict["status"] != "grounded":
+            all_grounded = False
 
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'run_eval',
-    targetType: 'artefact',
-    targetId: updatedArtefact.id,
-    targetVersion: updatedArtefact.version,
-    evalRunId,
-    diff: JSON.stringify({ status: { from: artefact.status, to: updatedArtefact.status } })
-  });
+    updated_artefact = create_artefact_version(
+        db, artefact.id, status="pending_approval" if all_grounded else "draft"
+    )
 
-  return { artefact: updatedArtefact, evalRunId };
-}
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="run_eval",
+        target_type="artefact",
+        target_id=updated_artefact.id,
+        target_version=updated_artefact.version,
+        eval_run_id=eval_run_id,
+        diff=json.dumps({"status": {"from": artefact.status, "to": updated_artefact.status}}),
+    )
+
+    return updated_artefact, eval_run_id
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/runEval.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_run_eval.py -v`
 Expected: PASS (2 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/tools/runEval.ts poc/tests/tools/runEval.test.ts
+git add poc/server/src/research_authoring/tools/run_eval.py poc/server/tests/tools/test_run_eval.py
 git commit -m "feat: add run_eval tool gating artefacts on claim groundedness"
 ```
 
@@ -1962,139 +2161,121 @@ git commit -m "feat: add run_eval tool gating artefacts on claim groundedness"
 ### Task 14: Tool — `approve_artefact`
 
 **Files:**
-- Create: `poc/src/tools/approveArtefact.ts`
-- Test: `poc/tests/tools/approveArtefact.test.ts`
+- Create: `poc/server/src/research_authoring/tools/approve_artefact.py`
+- Test: `poc/server/tests/tools/test_approve_artefact.py`
 
 **Interfaces:**
-- Consumes: `getLatestArtefact`/`createArtefactVersion` (Task 4), `writeAuditEntry` (Task 6).
-- Produces: `approveArtefact(db, input: { actor: string; artefactId: string; decision: 'approve' | 'reject' }): Artefact` — throws if the artefact is not `pending_approval`. Task 15 (`draft_section`) consumes only `approved` artefacts.
+- Consumes: `get_latest_artefact`/`create_artefact_version` (Task 4), `write_audit_entry` (Task 6).
+- Produces: `approve_artefact(db, *, actor, artefact_id, decision) -> Artefact` — `decision` is `'approve'` or `'reject'`; raises `ValueError` if the artefact is not `pending_approval`. Task 15 (`draft_section`) consumes only `approved` artefacts.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/tools/approveArtefact.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createArtefact, createArtefactVersion } from '../../src/db/artefactRepository.js';
-import { getAuditTrailForTarget } from '../../src/db/auditRepository.js';
-import { approveArtefact } from '../../src/tools/approveArtefact.js';
+```python
+# poc/server/tests/tools/test_approve_artefact.py
+import pytest
+from research_authoring.db.connection import create_db
+from research_authoring.db.artefact_repository import create_artefact, create_artefact_version
+from research_authoring.db.audit_repository import get_audit_trail_for_target
+from research_authoring.tools.approve_artefact import approve_artefact
 
-const TEST_DB_PATH = './data/test-approve.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def _make_pending_artefact(db):
+    draft = create_artefact(
+        db, type="thesis_point", content="x", claim_ids=[], status="draft",
+        approved_by=None, approved_at=None,
+    )
+    return create_artefact_version(db, draft.id, status="pending_approval")
 
-describe('approveArtefact', () => {
-  it('approves a pending_approval artefact and records who/when', () => {
-    const draft = createArtefact(db, {
-      type: 'thesis_point',
-      content: 'x',
-      claimIds: [],
-      status: 'draft',
-      approvedBy: null,
-      approvedAt: null
-    });
-    const pending = createArtefactVersion(db, draft.id, { status: 'pending_approval' });
 
-    const approved = approveArtefact(db, { actor: 'analyst-1', artefactId: pending.id, decision: 'approve' });
+def test_approves_a_pending_approval_artefact_and_records_who_when(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    pending = _make_pending_artefact(db)
 
-    expect(approved.status).toBe('approved');
-    expect(approved.approvedBy).toBe('analyst-1');
-    expect(approved.approvedAt).toBeTruthy();
+    approved = approve_artefact(db, actor="analyst-1", artefact_id=pending.id, decision="approve")
 
-    const trail = getAuditTrailForTarget(db, 'artefact', pending.id);
-    expect(trail.some((e) => e.action === 'approve_artefact')).toBe(true);
-  });
+    assert approved.status == "approved"
+    assert approved.approved_by == "analyst-1"
+    assert approved.approved_at
 
-  it('rejects the artefact when decision is reject', () => {
-    const draft = createArtefact(db, {
-      type: 'thesis_point',
-      content: 'x',
-      claimIds: [],
-      status: 'draft',
-      approvedBy: null,
-      approvedAt: null
-    });
-    const pending = createArtefactVersion(db, draft.id, { status: 'pending_approval' });
+    trail = get_audit_trail_for_target(db, "artefact", pending.id)
+    assert any(e.action == "approve_artefact" for e in trail)
 
-    const rejected = approveArtefact(db, { actor: 'analyst-1', artefactId: pending.id, decision: 'reject' });
-    expect(rejected.status).toBe('rejected');
-  });
 
-  it('throws if the artefact is not pending_approval', () => {
-    const draft = createArtefact(db, {
-      type: 'thesis_point',
-      content: 'x',
-      claimIds: [],
-      status: 'draft',
-      approvedBy: null,
-      approvedAt: null
-    });
-    expect(() =>
-      approveArtefact(db, { actor: 'analyst-1', artefactId: draft.id, decision: 'approve' })
-    ).toThrow('Artefact is not pending approval');
-  });
-});
+def test_rejects_the_artefact_when_decision_is_reject(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    pending = _make_pending_artefact(db)
+
+    rejected = approve_artefact(db, actor="analyst-1", artefact_id=pending.id, decision="reject")
+    assert rejected.status == "rejected"
+
+
+def test_raises_if_the_artefact_is_not_pending_approval(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    draft = create_artefact(
+        db, type="thesis_point", content="x", claim_ids=[], status="draft",
+        approved_by=None, approved_at=None,
+    )
+    with pytest.raises(ValueError, match="Artefact is not pending approval"):
+        approve_artefact(db, actor="analyst-1", artefact_id=draft.id, decision="approve")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/approveArtefact.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/approveArtefact.js'`
+Run: `cd poc/server && pytest tests/tools/test_approve_artefact.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.approve_artefact'`
 
-- [ ] **Step 3: Implement `poc/src/tools/approveArtefact.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/approve_artefact.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { getLatestArtefact, createArtefactVersion } from '../db/artefactRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Artefact } from '../db/types.js';
+```python
+import sqlite3
+import json
+from datetime import datetime, timezone
+from research_authoring.db.artefact_repository import get_latest_artefact, create_artefact_version
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Artefact
 
-export function approveArtefact(
-  db: Database.Database,
-  input: { actor: string; artefactId: string; decision: 'approve' | 'reject' }
-): Artefact {
-  const current = getLatestArtefact(db, input.artefactId);
-  if (!current) throw new Error(`Artefact ${input.artefactId} not found`);
-  if (current.status !== 'pending_approval') {
-    throw new Error('Artefact is not pending approval');
-  }
 
-  const now = new Date().toISOString();
-  const updated = createArtefactVersion(db, current.id, {
-    status: input.decision === 'approve' ? 'approved' : 'rejected',
-    approvedBy: input.actor,
-    approvedAt: now
-  });
+def approve_artefact(
+    db: sqlite3.Connection, *, actor: str, artefact_id: str, decision: str
+) -> Artefact:
+    current = get_latest_artefact(db, artefact_id)
+    if current is None:
+        raise ValueError(f"Artefact {artefact_id} not found")
+    if current.status != "pending_approval":
+        raise ValueError("Artefact is not pending approval")
 
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'approve_artefact',
-    targetType: 'artefact',
-    targetId: updated.id,
-    targetVersion: updated.version,
-    evalRunId: null,
-    diff: JSON.stringify({ status: { from: current.status, to: updated.status } })
-  });
+    now = datetime.now(timezone.utc).isoformat()
+    updated = create_artefact_version(
+        db,
+        current.id,
+        status="approved" if decision == "approve" else "rejected",
+        approved_by=actor,
+        approved_at=now,
+    )
 
-  return updated;
-}
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="approve_artefact",
+        target_type="artefact",
+        target_id=updated.id,
+        target_version=updated.version,
+        eval_run_id=None,
+        diff=json.dumps({"status": {"from": current.status, "to": updated.status}}),
+    )
+
+    return updated
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/approveArtefact.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_approve_artefact.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add poc/src/tools/approveArtefact.ts poc/tests/tools/approveArtefact.test.ts
+git add poc/server/src/research_authoring/tools/approve_artefact.py poc/server/tests/tools/test_approve_artefact.py
 git commit -m "feat: add approve_artefact human-in-the-loop tool"
 ```
 
@@ -2103,208 +2284,190 @@ git commit -m "feat: add approve_artefact human-in-the-loop tool"
 ### Task 15: Tools — `draft_section` and `commit_section`
 
 **Files:**
-- Create: `poc/src/tools/draftSection.ts`
-- Create: `poc/src/tools/commitSection.ts`
-- Test: `poc/tests/tools/draftAndCommitSection.test.ts`
+- Create: `poc/server/src/research_authoring/tools/draft_section.py`
+- Create: `poc/server/src/research_authoring/tools/commit_section.py`
+- Test: `poc/server/tests/tools/test_draft_and_commit_section.py`
 
 **Interfaces:**
-- Consumes: `getLatestArtefact` (Task 4), `createReportSection`/`getLatestReportSection`/`createReportSectionVersion` (Task 5), `getLatestReport`/`createReportVersion` (Task 5), `writeAuditEntry` (Task 6).
-- Produces: `draftSection(input: { reportId: string; sectionType: string; approvedArtefacts: Artefact[] }): { sectionType: string; draftContent: string; claimIds: string[] }` (pure text-assembly helper, no DB write — represents the in-chat draft before commit); `commitSection(db, input: { actor: string; reportId: string; sectionType: string; content: string; claimIds: string[]; existingSectionId?: string }): ReportSection` (creates or versions a `ReportSection` and appends its id to the `Report`'s `sectionIds` if new). Task 16 (`assemble_report`) consumes the `Report`/`ReportSection` state this produces.
+- Consumes: `get_latest_artefact` (Task 4), `create_report_section`/`get_latest_report_section`/`create_report_section_version` (Task 5), `get_latest_report`/`create_report_version` (Task 5), `write_audit_entry` (Task 6).
+- Produces: `draft_section(*, report_id, section_type, approved_artefacts) -> dict` (keys `section_type`, `draft_content`, `claim_ids`; a pure text-assembly helper, no DB write — represents the in-chat draft before commit); `commit_section(db, *, actor, report_id, section_type, content, claim_ids, existing_section_id=None) -> ReportSection` (creates or versions a `ReportSection` and appends its id to the `Report`'s `section_ids` if new). Task 16 (`assemble_report`) consumes the `Report`/`ReportSection` state this produces.
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/tools/draftAndCommitSection.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createArtefact } from '../../src/db/artefactRepository.js';
-import { createReport, getLatestReport, getLatestReportSection } from '../../src/db/reportRepository.js';
-import { getAuditTrailForTarget } from '../../src/db/auditRepository.js';
-import { draftSection } from '../../src/tools/draftSection.js';
-import { commitSection } from '../../src/tools/commitSection.js';
+```python
+# poc/server/tests/tools/test_draft_and_commit_section.py
+from research_authoring.db.connection import create_db
+from research_authoring.db.artefact_repository import create_artefact
+from research_authoring.db.report_repository import (
+    create_report,
+    get_latest_report,
+    get_latest_report_section,
+)
+from research_authoring.db.audit_repository import get_audit_trail_for_target
+from research_authoring.tools.draft_section import draft_section
+from research_authoring.tools.commit_section import commit_section
 
-const TEST_DB_PATH = './data/test-draft-commit.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def test_draft_section_assembles_draft_content_and_claim_ids_from_approved_artefacts(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    artefact = create_artefact(
+        db,
+        type="thesis_point",
+        content="Margin expansion driven by pricing power.",
+        claim_ids=["claim-1"],
+        status="approved",
+        approved_by="analyst-1",
+        approved_at="2026-07-24T12:00:00Z",
+    )
 
-describe('draftSection', () => {
-  it('assembles draft content and claim ids from approved artefacts', () => {
-    const artefact = createArtefact(db, {
-      type: 'thesis_point',
-      content: 'Margin expansion driven by pricing power.',
-      claimIds: ['claim-1'],
-      status: 'approved',
-      approvedBy: 'analyst-1',
-      approvedAt: '2026-07-24T12:00:00Z'
-    });
+    draft = draft_section(
+        report_id="report-1", section_type="investment_thesis", approved_artefacts=[artefact]
+    )
 
-    const draft = draftSection({
-      reportId: 'report-1',
-      sectionType: 'investment_thesis',
-      approvedArtefacts: [artefact]
-    });
+    assert draft["section_type"] == "investment_thesis"
+    assert "Margin expansion driven by pricing power." in draft["draft_content"]
+    assert draft["claim_ids"] == ["claim-1"]
 
-    expect(draft.sectionType).toBe('investment_thesis');
-    expect(draft.draftContent).toContain('Margin expansion driven by pricing power.');
-    expect(draft.claimIds).toEqual(['claim-1']);
-  });
-});
 
-describe('commitSection', () => {
-  it('creates a new report section and appends it to the report on first commit', () => {
-    const report = createReport(db, 'equity-initiation-v1');
+def test_commit_section_creates_a_new_section_and_appends_it_to_the_report_on_first_commit(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
 
-    const section = commitSection(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      sectionType: 'investment_thesis',
-      content: 'Margin expansion driven by pricing power.',
-      claimIds: ['claim-1']
-    });
+    section = commit_section(
+        db,
+        actor="analyst-1",
+        report_id=report.id,
+        section_type="investment_thesis",
+        content="Margin expansion driven by pricing power.",
+        claim_ids=["claim-1"],
+    )
 
-    expect(section.status).toBe('committed');
-    expect(section.version).toBe(1);
+    assert section.status == "committed"
+    assert section.version == 1
 
-    const updatedReport = getLatestReport(db, report.id);
-    expect(updatedReport?.sectionIds).toEqual([section.id]);
+    updated_report = get_latest_report(db, report.id)
+    assert updated_report.section_ids == [section.id]
 
-    const trail = getAuditTrailForTarget(db, 'report_section', section.id);
-    expect(trail.some((e) => e.action === 'commit_section')).toBe(true);
-  });
+    trail = get_audit_trail_for_target(db, "report_section", section.id)
+    assert any(e.action == "commit_section" for e in trail)
 
-  it('versions an existing section on a subsequent commit without duplicating the report section list', () => {
-    const report = createReport(db, 'equity-initiation-v1');
-    const first = commitSection(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      sectionType: 'investment_thesis',
-      content: 'v1 text',
-      claimIds: ['claim-1']
-    });
 
-    const second = commitSection(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      sectionType: 'investment_thesis',
-      content: 'v2 text, refined',
-      claimIds: ['claim-1', 'claim-2'],
-      existingSectionId: first.id
-    });
+def test_commit_section_versions_an_existing_section_without_duplicating_the_report_section_list(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report = create_report(db, "equity-initiation-v1")
+    first = commit_section(
+        db, actor="analyst-1", report_id=report.id, section_type="investment_thesis",
+        content="v1 text", claim_ids=["claim-1"],
+    )
 
-    expect(second.id).toBe(first.id);
-    expect(second.version).toBe(2);
+    second = commit_section(
+        db, actor="analyst-1", report_id=report.id, section_type="investment_thesis",
+        content="v2 text, refined", claim_ids=["claim-1", "claim-2"],
+        existing_section_id=first.id,
+    )
 
-    const updatedReport = getLatestReport(db, report.id);
-    expect(updatedReport?.sectionIds).toEqual([first.id]);
-    expect(getLatestReportSection(db, first.id)?.content).toBe('v2 text, refined');
-  });
-});
+    assert second.id == first.id
+    assert second.version == 2
+
+    updated_report = get_latest_report(db, report.id)
+    assert updated_report.section_ids == [first.id]
+    assert get_latest_report_section(db, first.id).content == "v2 text, refined"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/draftAndCommitSection.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/draftSection.js'`
+Run: `cd poc/server && pytest tests/tools/test_draft_and_commit_section.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.draft_section'`
 
-- [ ] **Step 3: Implement `poc/src/tools/draftSection.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/draft_section.py`**
 
-```typescript
-import type { Artefact } from '../db/types.js';
+```python
+from research_authoring.db.types import Artefact
 
-export function draftSection(input: {
-  reportId: string;
-  sectionType: string;
-  approvedArtefacts: Artefact[];
-}): { sectionType: string; draftContent: string; claimIds: string[] } {
-  const draftContent = input.approvedArtefacts.map((a) => a.content).join('\n\n');
-  const claimIds = input.approvedArtefacts.flatMap((a) => a.claimIds);
-  return { sectionType: input.sectionType, draftContent, claimIds };
-}
+
+def draft_section(*, report_id: str, section_type: str, approved_artefacts: list[Artefact]) -> dict:
+    draft_content = "\n\n".join(a.content for a in approved_artefacts)
+    claim_ids = [claim_id for a in approved_artefacts for claim_id in a.claim_ids]
+    return {"section_type": section_type, "draft_content": draft_content, "claim_ids": claim_ids}
 ```
 
-- [ ] **Step 4: Implement `poc/src/tools/commitSection.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/tools/commit_section.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import {
-  createReportSection,
-  getLatestReportSection,
-  createReportSectionVersion,
-  getLatestReport,
-  createReportVersion
-} from '../db/reportRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { ReportSection } from '../db/types.js';
+```python
+import sqlite3
+from datetime import datetime, timezone
+from typing import Optional
+from research_authoring.db.report_repository import (
+    create_report_section,
+    create_report_section_version,
+    get_latest_report,
+    create_report_version,
+)
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import ReportSection
 
-export function commitSection(
-  db: Database.Database,
-  input: {
-    actor: string;
-    reportId: string;
-    sectionType: string;
-    content: string;
-    claimIds: string[];
-    existingSectionId?: string;
-  }
-): ReportSection {
-  const now = new Date().toISOString();
-  let section: ReportSection;
 
-  if (input.existingSectionId) {
-    section = createReportSectionVersion(db, input.existingSectionId, {
-      content: input.content,
-      claimIds: input.claimIds,
-      status: 'committed',
-      committedBy: input.actor,
-      committedAt: now
-    });
-  } else {
-    section = createReportSection(db, {
-      reportId: input.reportId,
-      sectionType: input.sectionType,
-      content: input.content,
-      claimIds: input.claimIds,
-      status: 'committed',
-      committedBy: input.actor,
-      committedAt: now
-    });
+def commit_section(
+    db: sqlite3.Connection,
+    *,
+    actor: str,
+    report_id: str,
+    section_type: str,
+    content: str,
+    claim_ids: list[str],
+    existing_section_id: Optional[str] = None,
+) -> ReportSection:
+    now = datetime.now(timezone.utc).isoformat()
 
-    const report = getLatestReport(db, input.reportId);
-    if (!report) throw new Error(`Report ${input.reportId} not found`);
-    createReportVersion(db, input.reportId, {
-      sectionIds: [...report.sectionIds, section.id]
-    });
-  }
+    if existing_section_id:
+        section = create_report_section_version(
+            db,
+            existing_section_id,
+            content=content,
+            claim_ids=claim_ids,
+            status="committed",
+            committed_by=actor,
+            committed_at=now,
+        )
+    else:
+        section = create_report_section(
+            db,
+            report_id=report_id,
+            section_type=section_type,
+            content=content,
+            claim_ids=claim_ids,
+            status="committed",
+            committed_by=actor,
+            committed_at=now,
+        )
+        report = get_latest_report(db, report_id)
+        if report is None:
+            raise ValueError(f"Report {report_id} not found")
+        create_report_version(db, report_id, section_ids=[*report.section_ids, section.id])
 
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'commit_section',
-    targetType: 'report_section',
-    targetId: section.id,
-    targetVersion: section.version,
-    evalRunId: null,
-    diff: null
-  });
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="commit_section",
+        target_type="report_section",
+        target_id=section.id,
+        target_version=section.version,
+        eval_run_id=None,
+        diff=None,
+    )
 
-  return section;
-}
+    return section
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/draftAndCommitSection.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_draft_and_commit_section.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/tools/draftSection.ts poc/src/tools/commitSection.ts poc/tests/tools/draftAndCommitSection.test.ts
+git add poc/server/src/research_authoring/tools/draft_section.py poc/server/src/research_authoring/tools/commit_section.py poc/server/tests/tools/test_draft_and_commit_section.py
 git commit -m "feat: add draft_section and commit_section tools"
 ```
 
@@ -2313,254 +2476,240 @@ git commit -m "feat: add draft_section and commit_section tools"
 ### Task 16: Tools — `assemble_report` and `export_report` (Markdown)
 
 **Files:**
-- Create: `poc/src/tools/assembleReport.ts`
-- Create: `poc/src/tools/exportReport.ts`
-- Test: `poc/tests/tools/assembleAndExportReport.test.ts`
+- Create: `poc/server/src/research_authoring/tools/assemble_report.py`
+- Create: `poc/server/src/research_authoring/tools/export_report.py`
+- Test: `poc/server/tests/tools/test_assemble_and_export_report.py`
 
 **Interfaces:**
-- Consumes: `getLatestReport`/`createReportVersion` (Task 5), `getLatestReportSection` (Task 5), `getClaim` (Task 3), `getSource` (Task 3), `writeAuditEntry` (Task 6).
-- Produces: `assembleReport(db, input: { actor: string; reportId: string; sectionOrder: string[] }): Report` (validates every section referenced is `committed`, reorders `sectionIds`, sets status `ready_for_export`); `exportReportToMarkdown(db, input: { actor: string; reportId: string; templateTitle: string }): { markdown: string; report: Report }` (renders sections in order with footnote-style citations resolved from claims/sources, sets status `exported`).
+- Consumes: `get_latest_report`/`create_report_version` (Task 5), `get_latest_report_section` (Task 5), `get_claim` (Task 3), `write_audit_entry` (Task 6).
+- Produces: `assemble_report(db, *, actor, report_id, section_order) -> Report` (validates every section referenced is `committed`, reorders `section_ids`, sets status `ready_for_export`); `export_report_to_markdown(db, *, actor, report_id, template_title) -> tuple[str, Report]` (renders sections in order with footnote-style citations resolved from claims, sets status `exported`).
 
 - [ ] **Step 1: Write the failing test**
 
-```typescript
-// poc/tests/tools/assembleAndExportReport.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { existsSync, unlinkSync } from 'node:fs';
-import { createDb } from '../../src/db/db.js';
-import { createSource } from '../../src/db/sourceRepository.js';
-import { createClaim } from '../../src/db/claimRepository.js';
-import { createReport, createReportSection, createReportVersion, getLatestReport } from '../../src/db/reportRepository.js';
-import { assembleReport } from '../../src/tools/assembleReport.js';
-import { exportReportToMarkdown } from '../../src/tools/exportReport.js';
+```python
+# poc/server/tests/tools/test_assemble_and_export_report.py
+import pytest
+from research_authoring.db.connection import create_db
+from research_authoring.db.source_repository import create_source
+from research_authoring.db.claim_repository import create_claim
+from research_authoring.db.report_repository import (
+    create_report,
+    create_report_section,
+    create_report_version,
+    get_latest_report,
+)
+from research_authoring.tools.assemble_report import assemble_report
+from research_authoring.tools.export_report import export_report_to_markdown
 
-const TEST_DB_PATH = './data/test-assemble-export.db';
-let db: ReturnType<typeof createDb>;
 
-beforeEach(() => { db = createDb(TEST_DB_PATH); });
-afterEach(() => {
-  db.close();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
-});
+def _setup_two_section_report(db):
+    source = create_source(
+        db, type="connector:factset", retrieved_at="2026-07-24T12:00:00Z",
+        retrieved_by="analyst-1", context="FactSet fundamentals for AAPL",
+        raw_content_ref="epsEstimateFY26: 7.42", external_url=None,
+    )
+    claim = create_claim(
+        db, text="Consensus FY26 EPS is $7.42", source_id=source.id,
+        source_excerpt="epsEstimateFY26: 7.42", eval_status="grounded",
+        eval_score=0.94, eval_run_id="eval-run-1",
+    )
 
-function setupTwoSectionReport() {
-  const source = createSource(db, {
-    type: 'connector:factset',
-    retrievedAt: '2026-07-24T12:00:00Z',
-    retrievedBy: 'analyst-1',
-    context: 'FactSet fundamentals for AAPL',
-    rawContentRef: 'epsEstimateFY26: 7.42',
-    externalUrl: null
-  });
-  const claim = createClaim(db, {
-    text: 'Consensus FY26 EPS is $7.42',
-    sourceId: source.id,
-    sourceExcerpt: 'epsEstimateFY26: 7.42',
-    evalStatus: 'grounded',
-    evalScore: 0.94,
-    evalRunId: 'eval-run-1'
-  });
+    report = create_report(db, "equity-initiation-v1")
+    thesis_section = create_report_section(
+        db, report_id=report.id, section_type="investment_thesis",
+        content="Margin expansion driven by pricing power.", claim_ids=[],
+        status="committed", committed_by="analyst-1", committed_at="2026-07-24T12:05:00Z",
+    )
+    valuation_section = create_report_section(
+        db, report_id=report.id, section_type="valuation",
+        content="Consensus FY26 EPS is $7.42.", claim_ids=[claim.id],
+        status="committed", committed_by="analyst-1", committed_at="2026-07-24T12:10:00Z",
+    )
+    create_report_version(db, report.id, section_ids=[thesis_section.id, valuation_section.id])
 
-  const report = createReport(db, 'equity-initiation-v1');
-  const thesisSection = createReportSection(db, {
-    reportId: report.id,
-    sectionType: 'investment_thesis',
-    content: 'Margin expansion driven by pricing power.',
-    claimIds: [],
-    status: 'committed',
-    committedBy: 'analyst-1',
-    committedAt: '2026-07-24T12:05:00Z'
-  });
-  const valuationSection = createReportSection(db, {
-    reportId: report.id,
-    sectionType: 'valuation',
-    content: `Consensus FY26 EPS is $7.42.`,
-    claimIds: [claim.id],
-    status: 'committed',
-    committedBy: 'analyst-1',
-    committedAt: '2026-07-24T12:10:00Z'
-  });
-  createReportVersion(db, report.id, { sectionIds: [thesisSection.id, valuationSection.id] });
+    return report, thesis_section, valuation_section, source, claim
 
-  return { report, thesisSection, valuationSection, source, claim };
-}
 
-describe('assembleReport', () => {
-  it('marks the report ready_for_export when all referenced sections are committed', () => {
-    const { report, thesisSection, valuationSection } = setupTwoSectionReport();
+def test_assemble_report_marks_ready_for_export_when_all_referenced_sections_are_committed(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report, thesis_section, valuation_section, _source, _claim = _setup_two_section_report(db)
 
-    const assembled = assembleReport(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      sectionOrder: [thesisSection.id, valuationSection.id]
-    });
+    assembled = assemble_report(
+        db, actor="analyst-1", report_id=report.id,
+        section_order=[thesis_section.id, valuation_section.id],
+    )
 
-    expect(assembled.status).toBe('ready_for_export');
-    expect(assembled.sectionIds).toEqual([thesisSection.id, valuationSection.id]);
-  });
+    assert assembled.status == "ready_for_export"
+    assert assembled.section_ids == [thesis_section.id, valuation_section.id]
 
-  it('throws if a referenced section is not committed', () => {
-    const { report, thesisSection } = setupTwoSectionReport();
-    expect(() =>
-      assembleReport(db, { actor: 'analyst-1', reportId: report.id, sectionOrder: [thesisSection.id, 'missing-section'] })
-    ).toThrow('is not committed');
-  });
-});
 
-describe('exportReportToMarkdown', () => {
-  it('renders sections in order with a footnote citation for grounded claims', () => {
-    const { report, thesisSection, valuationSection } = setupTwoSectionReport();
-    assembleReport(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      sectionOrder: [thesisSection.id, valuationSection.id]
-    });
+def test_assemble_report_raises_if_a_referenced_section_is_not_committed(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report, thesis_section, _valuation_section, _source, _claim = _setup_two_section_report(db)
 
-    const { markdown, report: exported } = exportReportToMarkdown(db, {
-      actor: 'analyst-1',
-      reportId: report.id,
-      templateTitle: 'AAPL — Initiation of Coverage'
-    });
+    with pytest.raises(ValueError, match="is not committed"):
+        assemble_report(
+            db, actor="analyst-1", report_id=report.id,
+            section_order=[thesis_section.id, "missing-section"],
+        )
 
-    expect(markdown).toContain('# AAPL — Initiation of Coverage');
-    expect(markdown).toContain('## Investment Thesis');
-    expect(markdown).toContain('Margin expansion driven by pricing power.');
-    expect(markdown).toContain('## Valuation');
-    expect(markdown).toContain('Consensus FY26 EPS is $7.42. [1]');
-    expect(markdown).toContain('[1]: epsEstimateFY26: 7.42');
-    expect(exported.status).toBe('exported');
-    expect(getLatestReport(db, report.id)?.status).toBe('exported');
-  });
-});
+
+def test_export_report_to_markdown_renders_sections_in_order_with_a_footnote_citation(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+    report, thesis_section, valuation_section, _source, _claim = _setup_two_section_report(db)
+    assemble_report(
+        db, actor="analyst-1", report_id=report.id,
+        section_order=[thesis_section.id, valuation_section.id],
+    )
+
+    markdown, exported = export_report_to_markdown(
+        db, actor="analyst-1", report_id=report.id, template_title="AAPL — Initiation of Coverage"
+    )
+
+    assert "# AAPL — Initiation of Coverage" in markdown
+    assert "## Investment Thesis" in markdown
+    assert "Margin expansion driven by pricing power." in markdown
+    assert "## Valuation" in markdown
+    assert "Consensus FY26 EPS is $7.42. [1]" in markdown
+    assert "[1]: epsEstimateFY26: 7.42" in markdown
+    assert exported.status == "exported"
+    assert get_latest_report(db, report.id).status == "exported"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc && npx vitest run tests/tools/assembleAndExportReport.test.ts`
-Expected: FAIL — `Cannot find module '../../src/tools/assembleReport.js'`
+Run: `cd poc/server && pytest tests/tools/test_assemble_and_export_report.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.assemble_report'`
 
-- [ ] **Step 3: Implement `poc/src/tools/assembleReport.ts`**
+- [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/assemble_report.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { getLatestReport, getLatestReportSection, createReportVersion } from '../db/reportRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Report } from '../db/types.js';
+```python
+import sqlite3
+from research_authoring.db.report_repository import (
+    get_latest_report,
+    get_latest_report_section,
+    create_report_version,
+)
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Report
 
-export function assembleReport(
-  db: Database.Database,
-  input: { actor: string; reportId: string; sectionOrder: string[] }
-): Report {
-  const report = getLatestReport(db, input.reportId);
-  if (!report) throw new Error(`Report ${input.reportId} not found`);
 
-  for (const sectionId of input.sectionOrder) {
-    const section = getLatestReportSection(db, sectionId);
-    if (!section || section.status !== 'committed') {
-      throw new Error(`Section ${sectionId} is not committed and cannot be assembled`);
-    }
-  }
+def assemble_report(
+    db: sqlite3.Connection, *, actor: str, report_id: str, section_order: list[str]
+) -> Report:
+    report = get_latest_report(db, report_id)
+    if report is None:
+        raise ValueError(f"Report {report_id} not found")
 
-  const updated = createReportVersion(db, input.reportId, {
-    sectionIds: input.sectionOrder,
-    status: 'ready_for_export'
-  });
+    for section_id in section_order:
+        section = get_latest_report_section(db, section_id)
+        if section is None or section.status != "committed":
+            raise ValueError(f"Section {section_id} is not committed and cannot be assembled")
 
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'assemble_report',
-    targetType: 'report',
-    targetId: updated.id,
-    targetVersion: updated.version,
-    evalRunId: null,
-    diff: null
-  });
+    updated = create_report_version(db, report_id, section_ids=section_order, status="ready_for_export")
 
-  return updated;
-}
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="assemble_report",
+        target_type="report",
+        target_id=updated.id,
+        target_version=updated.version,
+        eval_run_id=None,
+        diff=None,
+    )
+
+    return updated
 ```
 
-- [ ] **Step 4: Implement `poc/src/tools/exportReport.ts`**
+- [ ] **Step 4: Implement `poc/server/src/research_authoring/tools/export_report.py`**
 
-```typescript
-import type Database from 'better-sqlite3';
-import { getLatestReport, getLatestReportSection, createReportVersion } from '../db/reportRepository.js';
-import { getClaim } from '../db/claimRepository.js';
-import { writeAuditEntry } from '../db/auditRepository.js';
-import type { Report } from '../db/types.js';
+```python
+import sqlite3
+from datetime import datetime, timezone
+from research_authoring.db.report_repository import (
+    get_latest_report,
+    get_latest_report_section,
+    create_report_version,
+)
+from research_authoring.db.claim_repository import get_claim
+from research_authoring.db.audit_repository import write_audit_entry
+from research_authoring.db.types import Report
 
-const SECTION_TITLES: Record<string, string> = {
-  investment_thesis: 'Investment Thesis',
-  valuation: 'Valuation',
-  risks: 'Risks'
-};
-
-export function exportReportToMarkdown(
-  db: Database.Database,
-  input: { actor: string; reportId: string; templateTitle: string }
-): { markdown: string; report: Report } {
-  const report = getLatestReport(db, input.reportId);
-  if (!report) throw new Error(`Report ${input.reportId} not found`);
-  if (report.status !== 'ready_for_export') {
-    throw new Error('Report must be ready_for_export before exporting');
-  }
-
-  const lines: string[] = [`# ${input.templateTitle}`, ''];
-  const footnotes: string[] = [];
-  let footnoteIndex = 1;
-
-  for (const sectionId of report.sectionIds) {
-    const section = getLatestReportSection(db, sectionId);
-    if (!section) throw new Error(`Section ${sectionId} not found`);
-
-    lines.push(`## ${SECTION_TITLES[section.sectionType] ?? section.sectionType}`, '');
-
-    let content = section.content;
-    for (const claimId of section.claimIds) {
-      const claim = getClaim(db, claimId);
-      if (!claim) continue;
-      content += ` [${footnoteIndex}]`;
-      footnotes.push(`[${footnoteIndex}]: ${claim.sourceExcerpt}`);
-      footnoteIndex += 1;
-    }
-    lines.push(content, '');
-  }
-
-  if (footnotes.length > 0) {
-    lines.push('---', ...footnotes);
-  }
-
-  const markdown = lines.join('\n');
-
-  const exported = createReportVersion(db, input.reportId, {
-    status: 'exported',
-    exportedAt: new Date().toISOString(),
-    exportRef: `markdown:${input.reportId}`
-  });
-
-  writeAuditEntry(db, {
-    actor: input.actor,
-    action: 'export_report',
-    targetType: 'report',
-    targetId: exported.id,
-    targetVersion: exported.version,
-    evalRunId: null,
-    diff: null
-  });
-
-  return { markdown, report: exported };
+_SECTION_TITLES = {
+    "investment_thesis": "Investment Thesis",
+    "valuation": "Valuation",
+    "risks": "Risks",
 }
+
+
+def export_report_to_markdown(
+    db: sqlite3.Connection, *, actor: str, report_id: str, template_title: str
+) -> tuple[str, Report]:
+    report = get_latest_report(db, report_id)
+    if report is None:
+        raise ValueError(f"Report {report_id} not found")
+    if report.status != "ready_for_export":
+        raise ValueError("Report must be ready_for_export before exporting")
+
+    lines = [f"# {template_title}", ""]
+    footnotes = []
+    footnote_index = 1
+
+    for section_id in report.section_ids:
+        section = get_latest_report_section(db, section_id)
+        if section is None:
+            raise ValueError(f"Section {section_id} not found")
+
+        lines.append(f"## {_SECTION_TITLES.get(section.section_type, section.section_type)}")
+        lines.append("")
+
+        content = section.content
+        for claim_id in section.claim_ids:
+            claim = get_claim(db, claim_id)
+            if claim is None:
+                continue
+            content += f" [{footnote_index}]"
+            footnotes.append(f"[{footnote_index}]: {claim.source_excerpt}")
+            footnote_index += 1
+        lines.append(content)
+        lines.append("")
+
+    if footnotes:
+        lines.append("---")
+        lines.extend(footnotes)
+
+    markdown = "\n".join(lines)
+
+    exported = create_report_version(
+        db, report_id, status="exported",
+        exported_at=datetime.now(timezone.utc).isoformat(),
+        export_ref=f"markdown:{report_id}",
+    )
+
+    write_audit_entry(
+        db,
+        actor=actor,
+        action="export_report",
+        target_type="report",
+        target_id=exported.id,
+        target_version=exported.version,
+        eval_run_id=None,
+        diff=None,
+    )
+
+    return markdown, exported
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc && npx vitest run tests/tools/assembleAndExportReport.test.ts`
+Run: `cd poc/server && pytest tests/tools/test_assemble_and_export_report.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add poc/src/tools/assembleReport.ts poc/src/tools/exportReport.ts poc/tests/tools/assembleAndExportReport.test.ts
+git add poc/server/src/research_authoring/tools/assemble_report.py poc/server/src/research_authoring/tools/export_report.py poc/server/tests/tools/test_assemble_and_export_report.py
 git commit -m "feat: add assemble_report and export_report (Markdown) tools"
 ```
 
@@ -2569,255 +2718,232 @@ git commit -m "feat: add assemble_report and export_report (Markdown) tools"
 ### Task 17: MCP server — register all tools and the widget resource
 
 **Files:**
-- Create: `poc/src/tools/registerTools.ts`
-- Create: `poc/src/server.ts`
+- Create: `poc/server/src/research_authoring/tools/register_tools.py`
+- Create: `poc/server/src/research_authoring/server.py`
 
 **Interfaces:**
-- Consumes: every tool function from Tasks 11–16, `createDb` (Task 2), `createOpenAIChatFn` (Task 7), `createFactsetClient` (Task 10).
-- Produces: a running MCP server (HTTP transport) with all nine tools registered and a widget resource URI. Task 18 (widget) and Task 19 (Skill + manual e2e) consume this running server.
+- Consumes: every tool function from Tasks 11–16, `create_db` (Task 2), `create_openai_chat_fn` (Task 7), `create_factset_client` (Task 10).
+- Produces: a running MCP server (streamable HTTP transport, via `FastMCP`) with all nine tools registered. Task 18 (widget resource + static hosting) and Task 19 (Skill + manual e2e) consume this running server.
 
-This task is registration/wiring rather than new business logic, so it's verified by manual inspection rather than a unit test — the logic underneath is already covered by Tasks 3–16.
+This task is registration/wiring rather than new business logic, so it's verified by manual inspection rather than a unit test — the logic underneath is already covered by Tasks 3–16. **Note:** the exact decorator/annotation API of the `mcp` package's `FastMCP` (e.g. how tool annotations like "requires approval" are expressed) may have moved since this plan was written — check https://github.com/modelcontextprotocol/python-sdk for the current API before wiring `approve_artefact_tool`'s annotation if the code below doesn't match what's installed.
 
-- [ ] **Step 1: Implement `poc/src/tools/registerTools.ts`**
+- [ ] **Step 1: Implement `poc/server/src/research_authoring/tools/register_tools.py`**
 
-```typescript
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type Database from 'better-sqlite3';
-import { z } from 'zod';
-import type { ChatFn } from '../llm/openaiClient.js';
-import type { FactsetClientLike } from './fetchFactsetData.js';
-import { ingestDocument } from './ingestDocument.js';
-import { fetchConnectorData } from './fetchFactsetData.js';
-import { synthesizeArtefact } from './synthesizeArtefact.js';
-import { runEval } from './runEval.js';
-import { approveArtefact } from './approveArtefact.js';
-import { draftSection } from './draftSection.js';
-import { commitSection } from './commitSection.js';
-import { assembleReport } from './assembleReport.js';
-import { exportReportToMarkdown } from './exportReport.js';
-import { getLatestArtefact } from '../db/artefactRepository.js';
+```python
+import json
+import sqlite3
+from dataclasses import asdict
+from typing import Optional
+from mcp.server.fastmcp import FastMCP
+from research_authoring.llm.openai_client import ChatFn
+from research_authoring.factset.factset_client import FactsetClient
+from research_authoring.db.source_repository import get_source
+from research_authoring.db.artefact_repository import get_latest_artefact
+from research_authoring.tools.ingest_document import ingest_document
+from research_authoring.tools.fetch_factset_data import fetch_connector_data
+from research_authoring.tools.synthesize_artefact import synthesize_artefact
+from research_authoring.tools.run_eval import run_eval
+from research_authoring.tools.approve_artefact import approve_artefact
+from research_authoring.tools.draft_section import draft_section
+from research_authoring.tools.commit_section import commit_section
+from research_authoring.tools.assemble_report import assemble_report
+from research_authoring.tools.export_report import export_report_to_markdown
 
-export function registerTools(
-  server: McpServer,
-  db: Database.Database,
-  chatFn: ChatFn,
-  factsetClient: FactsetClientLike
-): void {
-  server.registerTool(
-    'ingest_document',
-    {
-      description: 'Register an analyst-uploaded document as a Source.',
-      inputSchema: {
-        actor: z.string(),
-        context: z.string(),
-        rawContentRef: z.string(),
-        externalUrl: z.string().optional()
-      }
-    },
-    async ({ actor, context, rawContentRef, externalUrl }) => {
-      const source = ingestDocument(db, { retrievedBy: actor, context, rawContentRef, externalUrl });
-      return { content: [{ type: 'text', text: JSON.stringify(source) }] };
-    }
-  );
 
-  server.registerTool(
-    'fetch_connector_data',
-    {
-      description: 'Fetch FactSet fundamentals for a ticker and register as a Source.',
-      inputSchema: { actor: z.string(), ticker: z.string() }
-    },
-    async ({ actor, ticker }) => {
-      const source = await fetchConnectorData(db, factsetClient, { retrievedBy: actor, ticker });
-      return { content: [{ type: 'text', text: JSON.stringify(source) }] };
-    }
-  );
+def register_tools(
+    mcp: FastMCP,
+    db: sqlite3.Connection,
+    chat_fn: ChatFn,
+    factset_client: FactsetClient,
+) -> None:
+    @mcp.tool(description="Register an analyst-uploaded document as a Source.")
+    def ingest_document_tool(
+        actor: str, context: str, raw_content_ref: str, external_url: Optional[str] = None
+    ) -> str:
+        source = ingest_document(
+            db, retrieved_by=actor, context=context, raw_content_ref=raw_content_ref,
+            external_url=external_url,
+        )
+        return json.dumps(asdict(source))
 
-  server.registerTool(
-    'synthesize_artefact',
-    {
-      description: 'Draft an intermediate artefact from a source, decomposed into cited claims.',
-      inputSchema: {
-        actor: z.string(),
-        type: z.enum(['thesis_point', 'data_extract', 'comparison_table']),
-        generatedText: z.string(),
-        sourceId: z.string()
-      }
-    },
-    async ({ actor, type, generatedText, sourceId }) => {
-      const { getSource } = await import('../db/sourceRepository.js');
-      const source = getSource(db, sourceId);
-      if (!source) throw new Error(`Source ${sourceId} not found`);
-      const artefact = await synthesizeArtefact(db, chatFn, { actor, type, generatedText, source });
-      return { content: [{ type: 'text', text: JSON.stringify(artefact) }] };
-    }
-  );
+    @mcp.tool(description="Fetch FactSet fundamentals for a ticker and register as a Source.")
+    def fetch_connector_data_tool(actor: str, ticker: str) -> str:
+        source = fetch_connector_data(db, factset_client, retrieved_by=actor, ticker=ticker)
+        return json.dumps(asdict(source))
 
-  server.registerTool(
-    'run_eval',
-    {
-      description: 'Run the groundedness eval gate on an artefact before it can be approved.',
-      inputSchema: { actor: z.string(), artefactId: z.string() }
-    },
-    async ({ actor, artefactId }) => {
-      const result = await runEval(db, chatFn, { actor, artefactId });
-      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-    }
-  );
+    @mcp.tool(description="Draft an intermediate artefact from a source, decomposed into cited claims.")
+    def synthesize_artefact_tool(actor: str, type: str, generated_text: str, source_id: str) -> str:
+        source = get_source(db, source_id)
+        if source is None:
+            raise ValueError(f"Source {source_id} not found")
+        artefact = synthesize_artefact(
+            db, chat_fn, actor=actor, type=type, generated_text=generated_text, source=source
+        )
+        return json.dumps(asdict(artefact))
 
-  server.registerTool(
-    'approve_artefact',
-    {
-      description: 'Human approval gate: approve or reject a pending_approval artefact.',
-      annotations: { requiresApproval: true },
-      inputSchema: { actor: z.string(), artefactId: z.string(), decision: z.enum(['approve', 'reject']) }
-    },
-    async ({ actor, artefactId, decision }) => {
-      const artefact = approveArtefact(db, { actor, artefactId, decision });
-      return { content: [{ type: 'text', text: JSON.stringify(artefact) }] };
-    }
-  );
+    @mcp.tool(description="Run the groundedness eval gate on an artefact before it can be approved.")
+    def run_eval_tool(actor: str, artefact_id: str) -> str:
+        artefact, eval_run_id = run_eval(db, chat_fn, actor=actor, artefact_id=artefact_id)
+        return json.dumps({"artefact": asdict(artefact), "eval_run_id": eval_run_id})
 
-  server.registerTool(
-    'draft_section',
-    {
-      description: 'Assemble a draft section from approved artefacts (not persisted until commit_section).',
-      inputSchema: { reportId: z.string(), sectionType: z.string(), approvedArtefactIds: z.array(z.string()) }
-    },
-    async ({ reportId, sectionType, approvedArtefactIds }) => {
-      const artefacts = approvedArtefactIds.map((id) => {
-        const a = getLatestArtefact(db, id);
-        if (!a) throw new Error(`Artefact ${id} not found`);
-        return a;
-      });
-      const draft = draftSection({ reportId, sectionType, approvedArtefacts: artefacts });
-      return { content: [{ type: 'text', text: JSON.stringify(draft) }] };
-    }
-  );
+    @mcp.tool(description="Human approval gate: approve or reject a pending_approval artefact.")
+    def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> str:
+        artefact = approve_artefact(db, actor=actor, artefact_id=artefact_id, decision=decision)
+        return json.dumps(asdict(artefact))
 
-  server.registerTool(
-    'commit_section',
-    {
-      description: 'Commit analyst-refined section prose into the governed report document.',
-      inputSchema: {
-        actor: z.string(),
-        reportId: z.string(),
-        sectionType: z.string(),
-        content: z.string(),
-        claimIds: z.array(z.string()),
-        existingSectionId: z.string().optional()
-      }
-    },
-    async (input) => {
-      const section = commitSection(db, input);
-      return { content: [{ type: 'text', text: JSON.stringify(section) }] };
-    }
-  );
+    @mcp.tool(
+        description="Assemble a draft section from approved artefacts (not persisted until commit_section)."
+    )
+    def draft_section_tool(report_id: str, section_type: str, approved_artefact_ids: list[str]) -> str:
+        artefacts = []
+        for artefact_id in approved_artefact_ids:
+            artefact = get_latest_artefact(db, artefact_id)
+            if artefact is None:
+                raise ValueError(f"Artefact {artefact_id} not found")
+            artefacts.append(artefact)
+        draft = draft_section(report_id=report_id, section_type=section_type, approved_artefacts=artefacts)
+        return json.dumps(draft)
 
-  server.registerTool(
-    'assemble_report',
-    {
-      description: 'Validate and order committed sections into a ready-for-export report.',
-      inputSchema: { actor: z.string(), reportId: z.string(), sectionOrder: z.array(z.string()) }
-    },
-    async (input) => {
-      const report = assembleReport(db, input);
-      return { content: [{ type: 'text', text: JSON.stringify(report) }] };
-    }
-  );
+    @mcp.tool(description="Commit analyst-refined section prose into the governed report document.")
+    def commit_section_tool(
+        actor: str,
+        report_id: str,
+        section_type: str,
+        content: str,
+        claim_ids: list[str],
+        existing_section_id: Optional[str] = None,
+    ) -> str:
+        section = commit_section(
+            db, actor=actor, report_id=report_id, section_type=section_type, content=content,
+            claim_ids=claim_ids, existing_section_id=existing_section_id,
+        )
+        return json.dumps(asdict(section))
 
-  server.registerTool(
-    'export_report',
-    {
-      description: 'Export a ready-for-export report to Markdown with resolved citations.',
-      inputSchema: { actor: z.string(), reportId: z.string(), templateTitle: z.string() }
-    },
-    async (input) => {
-      const result = exportReportToMarkdown(db, input);
-      return { content: [{ type: 'text', text: result.markdown }] };
-    }
-  );
-}
+    @mcp.tool(description="Validate and order committed sections into a ready-for-export report.")
+    def assemble_report_tool(actor: str, report_id: str, section_order: list[str]) -> str:
+        report = assemble_report(db, actor=actor, report_id=report_id, section_order=section_order)
+        return json.dumps(asdict(report))
+
+    @mcp.tool(description="Export a ready-for-export report to Markdown with resolved citations.")
+    def export_report_tool(actor: str, report_id: str, template_title: str) -> str:
+        markdown, _report = export_report_to_markdown(
+            db, actor=actor, report_id=report_id, template_title=template_title
+        )
+        return markdown
 ```
 
-- [ ] **Step 2: Implement `poc/src/server.ts`**
+- [ ] **Step 2: Implement `poc/server/src/research_authoring/server.py`**
 
-```typescript
-import 'dotenv/config';
-import express from 'express';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import OpenAI from 'openai';
-import { createDb } from './db/db.js';
-import { createOpenAIChatFn } from './llm/openaiClient.js';
-import { createFactsetClient } from './factset/factsetClient.js';
-import { registerTools } from './tools/registerTools.js';
+```python
+import os
+from dotenv import load_dotenv
+import openai
+from mcp.server.fastmcp import FastMCP
+from research_authoring.db.connection import create_db
+from research_authoring.llm.openai_client import create_openai_chat_fn
+from research_authoring.factset.factset_client import create_factset_client
+from research_authoring.tools.register_tools import register_tools
 
-const db = createDb(process.env.DB_PATH ?? './data/poc.db');
-const openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const chatFn = createOpenAIChatFn(openaiClient);
-const factsetClient = createFactsetClient({
-  clientId: process.env.FACTSET_CLIENT_ID ?? '',
-  clientSecret: process.env.FACTSET_CLIENT_SECRET ?? '',
-  baseUrl: process.env.FACTSET_API_BASE_URL ?? 'https://api.factset.com'
-});
+load_dotenv()
 
-const server = new McpServer({ name: 'research-authoring-poc', version: '0.1.0' });
-registerTools(server, db, chatFn, factsetClient);
+db = create_db(os.environ.get("DB_PATH", "./data/poc.db"))
+openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+chat_fn = create_openai_chat_fn(openai_client)
+factset_client = create_factset_client(
+    client_id=os.environ.get("FACTSET_CLIENT_ID", ""),
+    client_secret=os.environ.get("FACTSET_CLIENT_SECRET", ""),
+    base_url=os.environ.get("FACTSET_API_BASE_URL", "https://api.factset.com"),
+)
 
-const app = express();
-app.use(express.json());
+mcp = FastMCP("research-authoring-poc")
+register_tools(mcp, db, chat_fn, factset_client)
 
-app.post('/mcp', async (req, res) => {
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on('close', () => transport.close());
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
-});
-
-const port = process.env.PORT ?? 3000;
-app.listen(port, () => {
-  console.log(`Research authoring POC MCP server listening on port ${port}`);
-});
+if __name__ == "__main__":
+    # Bind host/port explicitly rather than relying on FastMCP defaults: Render
+    # (and most PaaS hosts) require binding 0.0.0.0 and the port they inject via
+    # the PORT env var, not localhost/a hardcoded port. See Task 20 for the full
+    # Render deployment configuration.
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 ```
 
-- [ ] **Step 3: Add the `dotenv` dependency**
+- [ ] **Step 3: Verify the server starts and lists tools**
 
-Run: `cd poc && npm install dotenv`
-
-- [ ] **Step 4: Verify the server starts and lists tools**
-
-Run: `cd poc && npm run dev`
-Expected console output: `Research authoring POC MCP server listening on port 3000`
+Run: `cd poc/server && mkdir -p data && PORT=8000 python -m research_authoring.server`
+Expected console output confirming the MCP server is listening on `0.0.0.0:8000` (exact log line depends on the installed `mcp` version). **Note:** check that the installed `mcp` version's `FastMCP.run(...)` actually accepts `host`/`port` keyword arguments for the `streamable-http` transport — if it doesn't, use the underlying ASGI app (`mcp.streamable_http_app()`) with `uvicorn.run(app, host="0.0.0.0", port=...)` instead, per the current `mcp` SDK docs at https://github.com/modelcontextprotocol/python-sdk.
 
 In a second terminal, use the MCP inspector to confirm all nine tools are registered:
-Run: `npx @modelcontextprotocol/inspector node --loader tsx src/server.ts`
-Expected: inspector UI lists `ingest_document`, `fetch_connector_data`, `synthesize_artefact`, `run_eval`, `approve_artefact`, `draft_section`, `commit_section`, `assemble_report`, `export_report`.
+Run: `npx @modelcontextprotocol/inspector`, then point it at the running server's URL.
+Expected: inspector UI lists `ingest_document_tool`, `fetch_connector_data_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add poc/src/tools/registerTools.ts poc/src/server.ts poc/package.json poc/package-lock.json
-git commit -m "feat: wire MCP server with all nine tools over HTTP transport"
+git add poc/server/src/research_authoring/tools/register_tools.py poc/server/src/research_authoring/server.py
+git commit -m "feat: wire FastMCP server with all nine tools"
 ```
 
 ---
 
-### Task 18: Apps SDK widget — report workspace
+### Task 18: Apps SDK widget — report workspace (React)
 
 **Files:**
-- Create: `poc/src/widget/src/openaiBridge.ts`
-- Create: `poc/src/widget/src/ReportWorkspace.tsx`
-- Create: `poc/src/widget/index.html`
-- Create: `poc/src/widget/build.mjs`
-- Modify: `poc/src/server.ts` — serve the built widget bundle and register it as a resource
+- Create: `poc/widget/package.json`
+- Create: `poc/widget/tsconfig.json`
+- Create: `poc/widget/src/openaiBridge.ts`
+- Create: `poc/widget/src/ReportWorkspace.tsx`
+- Create: `poc/widget/src/entry.tsx`
+- Create: `poc/widget/index.html`
+- Create: `poc/widget/build.mjs`
+- Modify: `poc/server/src/research_authoring/server.py` — serve the built widget bundle as static files and register it as an MCP resource
 
 **Interfaces:**
 - Consumes: the nine MCP tools registered in Task 17 (called via the widget bridge's `callTool`).
 - Produces: a fullscreen widget the ChatGPT client renders, exercised manually against ChatGPT Developer Mode in Task 19.
 
-This is UI wiring against a host (ChatGPT) that can't be unit-tested outside it, so verification here is a manual smoke test against the Apps SDK's local widget preview, not an automated test.
+This widget is the one part of the stack that must be TypeScript/React rather than Python — Apps SDK widgets render as browser content inside ChatGPT's iframe, and the MCP server (Python) only serves the built bundle and registers its resource URI. This is UI wiring against a host (ChatGPT) that can't be unit-tested outside it, so verification here is a manual smoke test, not an automated test.
 
-- [ ] **Step 1: Implement `poc/src/widget/src/openaiBridge.ts`**
+- [ ] **Step 1: Create `poc/widget/package.json`**
+
+```json
+{
+  "name": "research-authoring-poc-widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.5.4"
+  }
+}
+```
+
+- [ ] **Step 2: Create `poc/widget/tsconfig.json`**
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}
+```
+
+- [ ] **Step 3: Implement `poc/widget/src/openaiBridge.ts`**
 
 ```typescript
 export interface OpenAiBridge {
@@ -2840,7 +2966,7 @@ export function getOpenAiBridge(): OpenAiBridge {
 }
 ```
 
-- [ ] **Step 2: Implement `poc/src/widget/src/ReportWorkspace.tsx`**
+- [ ] **Step 4: Implement `poc/widget/src/ReportWorkspace.tsx`**
 
 ```typescript
 import { useEffect, useState } from 'react';
@@ -2851,7 +2977,7 @@ interface ArtefactSummary {
   type: string;
   status: string;
   content: string;
-  claimIds: string[];
+  claim_ids: string[];
 }
 
 export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: ArtefactSummary[] }) {
@@ -2865,13 +2991,14 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
 
   async function approve(artefactId: string) {
     const bridge = getOpenAiBridge();
-    const result = await bridge.callTool('approve_artefact', {
+    const result = await bridge.callTool('approve_artefact_tool', {
       actor: 'analyst-1',
-      artefactId,
+      artefact_id: artefactId,
       decision: 'approve'
     });
+    const parsed = JSON.parse(result as string);
     setArtefacts((prev) =>
-      prev.map((a) => (a.id === artefactId ? { ...a, status: (result as any).status } : a))
+      prev.map((a) => (a.id === artefactId ? { ...a, status: parsed.status } : a))
     );
   }
 
@@ -2884,7 +3011,7 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
           .map((artefact) => (
             <li key={artefact.id}>
               <p>{artefact.content}</p>
-              {artefact.claimIds.map((claimId, i) => (
+              {artefact.claim_ids.map((claimId, i) => (
                 <button key={claimId} onClick={() => setSelectedClaimId(claimId)}>
                   [{i + 1}]
                 </button>
@@ -2899,7 +3026,21 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
 }
 ```
 
-- [ ] **Step 3: Implement `poc/src/widget/index.html`**
+- [ ] **Step 5: Implement `poc/widget/src/entry.tsx`**
+
+```typescript
+import { createRoot } from 'react-dom/client';
+import { ReportWorkspace } from './ReportWorkspace.js';
+import { getOpenAiBridge } from './openaiBridge.js';
+
+const bridge = getOpenAiBridge();
+const initialArtefacts = (bridge.widgetState.artefacts as any[]) ?? [];
+
+const root = createRoot(document.getElementById('root')!);
+root.render(<ReportWorkspace initialArtefacts={initialArtefacts} />);
+```
+
+- [ ] **Step 6: Implement `poc/widget/index.html`**
 
 ```html
 <!doctype html>
@@ -2915,83 +3056,60 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
 </html>
 ```
 
-- [ ] **Step 4: Implement `poc/src/widget/build.mjs`**
+- [ ] **Step 7: Implement `poc/widget/build.mjs`**
 
 ```javascript
 import { build } from 'esbuild';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-mkdirSync('dist/widget', { recursive: true });
+mkdirSync('dist', { recursive: true });
 
 await build({
-  entryPoints: ['src/widget/src/entry.tsx'],
+  entryPoints: ['src/entry.tsx'],
   bundle: true,
-  outfile: 'dist/widget/bundle.js',
+  outfile: 'dist/bundle.js',
   format: 'esm',
   jsx: 'automatic'
 });
 
 writeFileSync(
-  'dist/widget/index.html',
+  'dist/index.html',
   `<!doctype html><html><head><meta charset="utf-8"><title>Research Authoring Workspace</title></head><body><div id="root"></div><script type="module" src="./bundle.js"></script></body></html>`
 );
 
-console.log('Widget bundle built at dist/widget/bundle.js');
+console.log('Widget bundle built at dist/bundle.js');
 ```
 
-- [ ] **Step 5: Create the widget entrypoint `poc/src/widget/src/entry.tsx`**
+- [ ] **Step 8: Build the widget bundle**
 
-```typescript
-import { createRoot } from 'react-dom/client';
-import { ReportWorkspace } from './ReportWorkspace.js';
-import { getOpenAiBridge } from './openaiBridge.js';
+Run: `cd poc/widget && npm install && npm run build`
+Expected: `Widget bundle built at dist/bundle.js`, and `poc/widget/dist/bundle.js` + `poc/widget/dist/index.html` exist.
 
-const bridge = getOpenAiBridge();
-const initialArtefacts = (bridge.widgetState.artefacts as any[]) ?? [];
+- [ ] **Step 9: Serve the widget and register it as an MCP resource from the Python server**
 
-const root = createRoot(document.getElementById('root')!);
-root.render(<ReportWorkspace initialArtefacts={initialArtefacts} />);
+Modify `poc/server/src/research_authoring/server.py` — add before the `if __name__ == "__main__":` block:
+
+```python
+_WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "..", "widget", "dist")
+
+
+@mcp.resource("ui://widget/report-workspace.html")
+def report_workspace_widget() -> str:
+    with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
+        return f.read()
 ```
 
-- [ ] **Step 6: Build the widget bundle**
+**Note:** `FastMCP`'s exact API for serving a widget's supporting static assets (e.g. `bundle.js`) alongside its HTML resource, and for setting the `text/html+skybridge` MIME type and `_meta`/`openai/outputTemplate` tool metadata pointing `run_eval_tool` and `approve_artefact_tool` at this resource, depends on the installed `mcp` package version — check https://developers.openai.com/apps-sdk/build/chatgpt-ui for the current pattern and adjust this registration accordingly before Task 19's live ChatGPT test.
 
-Run: `cd poc && npm run build:widget`
-Expected: `Widget bundle built at dist/widget/bundle.js`, and `dist/widget/bundle.js` + `dist/widget/index.html` exist.
+- [ ] **Step 10: Manual smoke test**
 
-- [ ] **Step 7: Register the widget as an MCP resource in `poc/src/server.ts`**
+Run: `cd poc/widget && npx serve dist` (or any static file server), then open the served URL in a browser.
+Expected: page loads without a JS error in the console other than the expected `window.openai bridge is not present` message (confirms the bridge check works outside ChatGPT; full interactive verification happens inside ChatGPT in Task 19).
 
-Add above the `app.listen` call:
-
-```typescript
-app.use('/widget', express.static('dist/widget'));
-
-server.registerResource(
-  'report-workspace-widget',
-  'ui://widget/report-workspace.html',
-  { mimeType: 'text/html+skybridge' },
-  async () => ({
-    contents: [
-      {
-        uri: 'ui://widget/report-workspace.html',
-        mimeType: 'text/html+skybridge',
-        text: `<iframe src="http://localhost:${port}/widget/index.html" style="width:100%;height:100%;border:none;"></iframe>`
-      }
-    ]
-  })
-);
-```
-
-Also add `_meta: { 'openai/outputTemplate': 'ui://widget/report-workspace.html' }` to the `run_eval` and `approve_artefact` tool registrations in `registerTools.ts` (the two tools whose output the analyst most needs to see rendered) so ChatGPT knows to render the widget after calling them.
-
-- [ ] **Step 8: Manual smoke test**
-
-Run: `cd poc && npm run build:widget && npm run dev`, then open `http://localhost:3000/widget/index.html` directly in a browser.
-Expected: page loads without a JS error in the console (the `window.openai bridge is not present` error is expected outside ChatGPT — confirms the bridge check works; full interactive verification happens inside ChatGPT in Task 19).
-
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add poc/src/widget poc/src/server.ts
+git add poc/widget poc/server/src/research_authoring/server.py
 git commit -m "feat: add Apps SDK fullscreen widget for artefact review and approval"
 ```
 
@@ -3003,7 +3121,7 @@ git commit -m "feat: add Apps SDK fullscreen widget for artefact review and appr
 - Create: `poc/skill/report-authoring-skill.md`
 
 **Interfaces:**
-- Consumes: the nine tool names from Task 17 (must match exactly).
+- Consumes: the nine tool names from Task 17 (must match exactly: `ingest_document_tool`, `fetch_connector_data_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`).
 - Produces: a documented Skill definition plus a recorded manual end-to-end pass — the acceptance test for the whole POC.
 
 - [ ] **Step 1: Write the Skill definition `poc/skill/report-authoring-skill.md`**
@@ -3016,22 +3134,25 @@ or draft/refine a section of a sell-side equity research report.
 
 **Steps to follow, in order:**
 1. If the analyst hasn't supplied source material yet, ask whether to use an uploaded
-   document (`ingest_document`) or FactSet fundamentals for a ticker (`fetch_connector_data`).
-2. Call `synthesize_artefact` to turn source material into a cited artefact
+   document (`ingest_document_tool`) or FactSet fundamentals for a ticker
+   (`fetch_connector_data_tool`).
+2. Call `synthesize_artefact_tool` to turn source material into a cited artefact
    (`thesis_point`, `data_extract`, or `comparison_table`) — never draft analysis
    directly into chat without going through this tool first.
-3. Call `run_eval` on the resulting artefact before presenting it to the analyst.
-4. Show the analyst the artefact and its claims for review. Only call `approve_artefact`
-   after the analyst has explicitly approved or rejected it — never assume approval.
-5. Once artefacts relevant to a section are approved, call `draft_section` to assemble
-   a starting draft, then refine the prose conversationally with the analyst as needed.
-6. When the analyst is satisfied with a section's wording, call `commit_section` —
+3. Call `run_eval_tool` on the resulting artefact before presenting it to the analyst.
+4. Show the analyst the artefact and its claims for review. Only call
+   `approve_artefact_tool` after the analyst has explicitly approved or rejected it —
+   never assume approval.
+5. Once artefacts relevant to a section are approved, call `draft_section_tool` to
+   assemble a starting draft, then refine the prose conversationally with the analyst
+   as needed.
+6. When the analyst is satisfied with a section's wording, call `commit_section_tool` —
    do not consider a section part of the report until this has been called.
-7. Once all intended sections are committed, call `assemble_report` with the desired
-   section order, then `export_report` to produce the Markdown deliverable.
+7. Once all intended sections are committed, call `assemble_report_tool` with the
+   desired section order, then `export_report_tool` to produce the Markdown deliverable.
 
-**Never:** call `approve_artefact` or `assemble_report` without an explicit analyst
-instruction to do so — these are approval gates, not automatic steps.
+**Never:** call `approve_artefact_tool` or `assemble_report_tool` without an explicit
+analyst instruction to do so — these are approval gates, not automatic steps.
 ```
 
 - [ ] **Step 2: Configure the Skill in the ChatGPT workspace admin panel**
@@ -3040,19 +3161,21 @@ Follow the current instructions at https://help.openai.com/en/articles/20001066-
 
 - [ ] **Step 3: Register the POC app in ChatGPT Developer Mode**
 
-Point ChatGPT Developer Mode at the running MCP server's `/mcp` endpoint (per current instructions at https://developers.openai.com/apps-sdk/build/chatgpt-ui). Confirm all nine tools and the `report-workspace-widget` resource appear.
+Point ChatGPT Developer Mode at the running Python MCP server's URL (per current instructions at https://developers.openai.com/apps-sdk/build/chatgpt-ui). Confirm all nine tools and the `report-workspace-widget` resource appear.
 
 - [ ] **Step 4: Run the full end-to-end scenario manually**
 
 In a ChatGPT conversation with the POC app and Skill enabled:
 1. Ask ChatGPT to pull FactSet fundamentals for a real ticker you have access to.
 2. Ask it to synthesize a `data_extract` artefact from that data.
-3. Confirm `run_eval` runs automatically (per the Skill) and the widget renders the artefact with a citation marker.
+3. Confirm `run_eval_tool` runs automatically (per the Skill) and the widget renders the artefact with a citation marker.
 4. Click the citation marker in the widget and confirm it shows the FactSet source excerpt.
 5. Approve the artefact from the widget; confirm its status updates to `approved`.
 6. Ask ChatGPT to draft a second section (e.g. `investment_thesis`) from an uploaded document, repeating ingest → synthesize → eval → approve.
 7. Commit both sections, then assemble and export the report; confirm the Markdown output contains both sections in order with resolved footnote citations.
-8. Query the SQLite `audit_log` table directly (`sqlite3 poc/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`) and confirm every step above produced an entry.
+8. Query the SQLite `audit_log` table directly (`sqlite3 poc/server/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`) and confirm every step above produced an entry.
+
+**Do this in one continuous session** (see Task 20): on Render's free tier the SQLite file is wiped on redeploy/restart/spin-down-wake, so pausing long enough for the instance to idle out mid-walkthrough will lose earlier state.
 
 Expected: all nine tool calls succeed, the widget renders and updates correctly inside ChatGPT, the exported Markdown is well-formed with real FactSet-derived content and citations, and the audit log has one entry per state transition performed.
 
@@ -3065,11 +3188,97 @@ git commit -m "docs: add report-authoring Skill definition and record e2e POC ve
 
 ---
 
+### Task 20: Render.com free-tier deployment configuration
+
+**Files:**
+- Create: `render.yaml`
+- Create: `poc/server/build.sh`
+- Modify: `poc/server/src/research_authoring/server.py` — already binds `0.0.0.0:$PORT` (Task 17); no further change needed here beyond verification
+- Modify: `poc/widget/build.mjs` — no code change; documented as part of the build step Render runs
+
+**Interfaces:**
+- Consumes: the Python server from Task 17 and the widget bundle from Task 18.
+- Produces: a deployable configuration Render can build and run on the free plan, serving both the MCP endpoint and the widget's static assets from the one free web service.
+
+This task is deployment configuration, not application logic, so it's verified by an actual Render deploy rather than a unit test.
+
+- [ ] **Step 1: Create `poc/server/build.sh`**
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build the widget bundle first so the Python server can serve it as static files.
+cd "$(dirname "$0")/../../widget"
+npm install
+npm run build
+
+# Install the Python server package.
+cd "$(dirname "$0")"
+pip install -e ".[dev]"
+```
+
+- [ ] **Step 2: Make the build script executable**
+
+Run: `chmod +x poc/server/build.sh`
+
+- [ ] **Step 3: Create `render.yaml` at the repository root**
+
+```yaml
+services:
+  - type: web
+    name: research-authoring-poc
+    runtime: python
+    plan: free
+    rootDir: poc/server
+    buildCommand: bash build.sh
+    startCommand: python -m research_authoring.server
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FACTSET_CLIENT_ID
+        sync: false
+      - key: FACTSET_CLIENT_SECRET
+        sync: false
+      - key: FACTSET_API_BASE_URL
+        value: https://api.factset.com
+      - key: DB_PATH
+        value: ./data/poc.db
+```
+
+`sync: false` means Render prompts you to enter these secret values in the dashboard rather than storing them in the repo — set `OPENAI_API_KEY`, `FACTSET_CLIENT_ID`, and `FACTSET_CLIENT_SECRET` there after the first deploy.
+
+- [ ] **Step 4: Ensure the data directory exists at boot**
+
+Modify `poc/server/src/research_authoring/server.py` — add before `db = create_db(...)`:
+
+```python
+os.makedirs(os.path.dirname(os.environ.get("DB_PATH", "./data/poc.db")) or ".", exist_ok=True)
+```
+
+(Needed because Render's ephemeral filesystem starts empty on every wake/redeploy — the `data/` directory used in local dev via `mkdir -p data` won't exist there.)
+
+- [ ] **Step 5: Deploy and verify**
+
+Push the repository to a Git provider Render can access, create the service from `render.yaml` (Render dashboard → New → Blueprint), and set the three secret env vars when prompted.
+
+Run (after deploy finishes): `curl -i https://<your-service>.onrender.com/` (or whatever health path the installed `mcp`/`FastMCP` version exposes)
+Expected: an HTTP response (not a connection error) confirming the service is reachable. Note the first request after idle may take up to ~50 seconds (free-tier cold start) — this is expected, not a bug; if ChatGPT's Developer Mode connection attempt times out on a cold instance, retry once the service has woken up.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add render.yaml poc/server/build.sh poc/server/src/research_authoring/server.py
+git commit -m "chore: add Render.com free-tier deployment configuration"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
-- Custom widget (inline/fullscreen) — Task 18. ✓
-- MCP tool layer (all nine tools) — Tasks 11–16. ✓
+- Custom widget (inline/fullscreen), React as required by the Apps SDK host — Task 18. ✓
+- MCP tool layer (all nine tools), Python via FastMCP — Tasks 11–16, 17. ✓
 - Data model (Source/Claim/Artefact/ReportSection/Report/AuditLogEntry, versioning) — Tasks 2–6. ✓
 - Claim-level citations resolved in widget and export — Tasks 12, 16, 18. ✓
 - Approval-gated human-in-the-loop — Task 14, wired into MCP registration in Task 17. ✓
@@ -3079,11 +3288,12 @@ git commit -m "docs: add report-authoring Skill definition and record e2e POC ve
 - Markdown export — Task 16. ✓
 - Skill wrapping the workflow — Task 19. ✓
 - Audit logging on every transition — Task 6, wired into Tasks 11–16. ✓
-- Prompt-injection containment (ingested content treated as inert data, not instructions) — reflected in Task 11's design (raw content stored as `rawContentRef`/`context`, never re-injected as system/instruction text) and reiterated as a "never" rule in the Task 19 Skill definition.
+- Render.com free-tier deployment (0.0.0.0/$PORT binding, ephemeral-storage handling, build/start commands) — Tasks 17, 20. ✓
+- Prompt-injection containment (ingested content treated as inert data, not instructions) — reflected in Task 11's design (raw content stored as `raw_content_ref`/`context`, never re-injected as system/instruction text) and reiterated as a "never" rule in the Task 19 Skill definition.
 
-**Placeholder scan:** no TBD/TODO markers; the one open external dependency (FactSet's exact endpoint paths) is called out explicitly as a verification step in Task 10 rather than left vague, with working default code provided.
+**Placeholder scan:** no TBD/TODO markers; the two genuinely uncertain external dependencies — FactSet's exact endpoint paths (Task 10) and the exact `mcp`/`FastMCP` widget-resource and tool-annotation API (Tasks 17, 18) — are called out explicitly as verification steps with working default code provided, not left vague.
 
-**Type consistency:** `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` defined once in Task 2's `types.ts` and referenced identically (same field names/casing) by every later task; tool function signatures in Task 17 match the exported function names/parameters from Tasks 11–16 exactly.
+**Type consistency:** `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` dataclasses defined once in Task 2's `types.py` and referenced identically (same field names) by every later task; tool function names registered in Task 17 (`*_tool` suffix) match what Task 18's widget and Task 19's Skill call exactly.
 
 ---
 
