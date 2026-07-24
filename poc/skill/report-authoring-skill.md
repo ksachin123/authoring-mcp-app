@@ -12,6 +12,11 @@ or draft/refine a section of a sell-side equity research report.
      `connector_name` set to that connector (e.g. `"factset"`) and the connector's
      output as `raw_content_ref`/`context`. Never treat a connector's raw output as
      part of the governed report until it has been ingested this way.
+   - For web search: use your own web search capability to find and read the
+     material, then IMMEDIATELY call `ingest_web_result_tool` with the page's URL
+     as `external_url` and its relevant content as `raw_content_ref`/`context`.
+     Never treat a web search result as part of the governed report until it has
+     been ingested this way.
 2. Call `synthesize_artefact_tool` to turn source material into a cited artefact
    (`thesis_point`, `data_extract`, or `comparison_table`) — never draft analysis
    directly into chat without going through this tool first.

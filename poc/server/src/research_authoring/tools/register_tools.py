@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from research_authoring.db.artefact_repository import get_latest_artefact
 from research_authoring.tools.ingest_document import ingest_document
 from research_authoring.tools.ingest_connector_result import ingest_connector_result
+from research_authoring.tools.ingest_web_result import ingest_web_result
 from research_authoring.tools.synthesize_artefact import synthesize_artefact
 from research_authoring.tools.run_eval import run_eval
 from research_authoring.tools.approve_artefact import approve_artefact
@@ -65,6 +66,23 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
         source = ingest_connector_result(
             db, retrieved_by=actor, connector_name=connector_name, context=context,
             raw_content_ref=raw_content_ref,
+        )
+        return json.dumps(asdict(source))
+
+    @mcp.tool(
+        description=(
+            "Register content found via ChatGPT's own web search as a governed Source. "
+            "Call this immediately after searching, before synthesizing any artefact from "
+            "the result -- never treat web search output as part of the governed report "
+            "until it has been ingested this way."
+        )
+    )
+    def ingest_web_result_tool(
+        actor: str, context: str, raw_content_ref: str, external_url: str
+    ) -> str:
+        source = ingest_web_result(
+            db, retrieved_by=actor, context=context, raw_content_ref=raw_content_ref,
+            external_url=external_url,
         )
         return json.dumps(asdict(source))
 
