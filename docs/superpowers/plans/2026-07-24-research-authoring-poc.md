@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a proof-of-concept that validates the ChatGPT-native research authoring architecture end-to-end: a real Apps SDK app running in ChatGPT, backed by our own Python MCP server and SQLite datastore, with a real FactSet connector, claim-level citations, a groundedness eval gate, human approval, a multi-section report template, a ChatGPT Skill wrapping the workflow, and Markdown export.
+**Goal:** Build a proof-of-concept that validates the ChatGPT-native research authoring architecture end-to-end: a real Apps SDK app running in ChatGPT, backed by our own Python MCP server and SQLite datastore, with FactSet data reached via ChatGPT's own FactSet connector (not a direct integration owned by our server), claim-level citations, an eval gate (currently a deterministic stub — no LLM calls in this phase), human approval, a multi-section report template, a ChatGPT Skill wrapping the workflow, and Markdown export.
 
-**Architecture:** A single Python MCP server (using the official `mcp` SDK's `FastMCP`) exposes tools for each pipeline stage (ingest, synthesize, eval, approve, draft, commit, assemble, export) backed by a SQLite database implementing the Source/Claim/Artefact/ReportSection/Report/AuditLogEntry model from the design spec. A React-based Apps SDK widget (fullscreen mode) renders the report workspace, artefact review queue, and citation panel — the widget must be a browser-rendered app because ChatGPT hosts Apps SDK UI in an iframe; this is the one part of the stack that cannot be Python regardless of backend choice. ChatGPT is the conversational and rendering surface only — all durable state lives server-side.
+**Architecture:** A single Python MCP server (using the official `mcp` SDK's `FastMCP`) exposes tools for each pipeline stage (ingest, synthesize, eval, approve, draft, commit, assemble, export) backed by a SQLite database implementing the Source/Claim/Artefact/ReportSection/Report/AuditLogEntry model from the design spec. A React-based Apps SDK widget (fullscreen mode) renders the report workspace, artefact review queue, and citation panel — the widget must be a browser-rendered app because ChatGPT hosts Apps SDK UI in an iframe; this is the one part of the stack that cannot be Python regardless of backend choice. ChatGPT is the conversational and rendering surface only — all durable state lives server-side. FactSet's own MCP connector is enabled directly in ChatGPT alongside this app; our server never calls FactSet's API — it only captures FactSet connector output into governed `Source` records via `ingest_connector_result`. No component in this POC makes an LLM API call: claim extraction and groundedness evaluation (Tasks 7-8) are deterministic, non-AI stubs by explicit project decision, proving the pipeline's sequencing and governance before real AI evaluation is wired in later.
 
-**Tech Stack:** Python 3.11+, `mcp` (official Python MCP SDK, `FastMCP`), stdlib `sqlite3`, `openai` Python SDK, `requests` for the FactSet client, `pytest` for tests, `uvicorn` to serve the MCP app. Widget: React + TypeScript + `esbuild`, served as static files alongside the MCP server.
+**Tech Stack:** Python 3.11+, `mcp` (official Python MCP SDK, `FastMCP`), stdlib `sqlite3`, `pytest` for tests, `uvicorn` to serve the MCP app. Widget: React + TypeScript + `esbuild`, served as static files alongside the MCP server. No `openai` SDK, no FactSet API client — neither is needed in this phase.
 
 **Spec:** `docs/superpowers/specs/2026-07-24-research-authoring-design.md`
 
-**Deployment target:** Render.com free tier. Free web services have an **ephemeral filesystem** — the local SQLite file is wiped on every redeploy, restart, or wake-from-spin-down — and no persistent disk is available on the free plan. This POC accepts that tradeoff deliberately: SQLite stays as-is (no Postgres migration), and the end-to-end verification (Task 19) must be completed in one continuous session before the free instance spins down from ~15 minutes of inactivity. This is a documented POC limitation, not a defect — the goal is proving the architecture and integration, not persistence durability on this specific host.
+**Deployment target:** Render.com free tier. Free web services have an **ephemeral filesystem** — the local SQLite file is wiped on every redeploy, restart, or wake-from-spin-down — and no persistent disk is available on the free plan. This POC accepts that tradeoff deliberately: SQLite stays as-is (no Postgres migration), and the end-to-end verification (Task 17) must be completed in one continuous session before the free instance spins down from ~15 minutes of inactivity. This is a documented POC limitation, not a defect — the goal is proving the architecture and integration, not persistence durability on this specific host.
 
 ## Global Constraints
 
@@ -19,8 +19,10 @@
 - Nothing is ever overwritten — artefacts, sections, and reports use append-only versioning (id + version composite key), matching the design's versioning requirement.
 - Every state transition (ingest, synthesize, eval, approve, reject, commit, export) writes an `AuditLogEntry` (per Governance Hooks).
 - A passing eval makes an artefact *eligible* for approval; it never auto-approves (per Testing & Evals — human is the final gate).
+- **No LLM calls anywhere in this POC.** Claim extraction (Task 7) and groundedness evaluation (Task 8) are deterministic, non-AI stubs by explicit project decision — they prove the eval-gate sequencing (extraction, scoring, persistence, state transition, audit trail) without making any real AI judgment yet. Wiring in real LLM-based versions is deferred to a later iteration; both functions' signatures are written so that swap won't require changing any caller.
+- **FactSet is accessed only via ChatGPT's own FactSet connector, never via a direct API integration owned by this server.** There is no FactSet OAuth client, no FactSet API credentials, anywhere in this codebase. `ingest_connector_result_tool` is the single capture point for anything a ChatGPT-native connector (FactSet, and potentially others later) already fetched.
 - POC scope excludes: LSEG connector, full financial-error-taxonomy eval suite, eval-of-the-evals regression harness, second-tier compliance-reviewer gate, RBAC/multi-tenant rollout, PDF/Word export (Markdown only), and a custom `search_web` tool (ChatGPT's native web search covers that input path; results are ingested via `ingest_document`).
-- All server-side logic (DB, tools, eval, FactSet client) is Python. Only the widget UI is TypeScript/React, because Apps SDK widgets render in a browser iframe inside ChatGPT — this is a platform requirement, not a stack preference.
+- All server-side logic (DB, tools, eval) is Python. Only the widget UI is TypeScript/React, because Apps SDK widgets render in a browser iframe inside ChatGPT — this is a platform requirement, not a stack preference.
 
 ---
 
@@ -44,20 +46,14 @@ poc/
           artefact_repository.py
           report_repository.py        # Report + ReportSection repositories
           audit_repository.py
-        llm/
-          __init__.py
-          openai_client.py
         eval/
           __init__.py
-          claim_extractor.py
-          groundedness_eval.py
-        factset/
-          __init__.py
-          factset_client.py
+          claim_extractor.py       # deterministic stub, no LLM call
+          groundedness_eval.py     # deterministic stub, no LLM call
         tools/
           __init__.py
           ingest_document.py
-          fetch_factset_data.py
+          ingest_connector_result.py   # captures ChatGPT-native connector output (e.g. FactSet)
           synthesize_artefact.py
           run_eval.py
           approve_artefact.py
@@ -73,11 +69,9 @@ poc/
       db/test_artefact_repository.py
       db/test_report_repository.py
       db/test_audit_repository.py
-      llm/test_openai_client.py
       eval/test_claim_extractor.py
       eval/test_groundedness_eval.py
-      factset/test_factset_client.py
-      tools/test_ingest_and_factset.py
+      tools/test_ingest_tools.py
       tools/test_synthesize_artefact.py
       tools/test_run_eval.py
       tools/test_approve_artefact.py
@@ -1189,132 +1183,7 @@ git commit -m "feat: add append-only audit log repository"
 
 ---
 
-### Task 7: OpenAI client wrapper
-
-**Files:**
-- Create: `poc/server/src/research_authoring/llm/__init__.py`
-- Create: `poc/server/src/research_authoring/llm/openai_client.py`
-- Test: `poc/server/tests/llm/test_openai_client.py`
-
-**Interfaces:**
-- Produces: `ChatFn = Callable[[str, str], str]` (called as `chat_fn(system, user) -> content`) and `create_openai_chat_fn(client, model: str = "gpt-5.5") -> ChatFn`. Tasks 8, 9 consume `ChatFn`.
-
-- [ ] **Step 1: Create `poc/server/src/research_authoring/llm/__init__.py`** (empty)
-
-- [ ] **Step 2: Write the failing test**
-
-```python
-# poc/server/tests/llm/test_openai_client.py
-from research_authoring.llm.openai_client import create_openai_chat_fn
-
-
-class FakeMessage:
-    def __init__(self, content):
-        self.content = content
-
-
-class FakeChoice:
-    def __init__(self, content):
-        self.message = FakeMessage(content)
-
-
-class FakeCompletionResponse:
-    def __init__(self, content):
-        self.choices = [FakeChoice(content)]
-
-
-class FakeCompletions:
-    def __init__(self):
-        self.calls = []
-
-    def create(self, **kwargs):
-        self.calls.append(kwargs)
-        return FakeCompletionResponse("the model response")
-
-
-class FakeChat:
-    def __init__(self, completions):
-        self.completions = completions
-
-
-class FakeClient:
-    def __init__(self):
-        self.completions = FakeCompletions()
-        self.chat = FakeChat(self.completions)
-
-
-def test_calls_chat_completions_create_and_returns_content():
-    fake_client = FakeClient()
-    chat_fn = create_openai_chat_fn(fake_client, model="gpt-5.5")
-
-    result = chat_fn("You are terse.", "Say hi.")
-
-    assert result == "the model response"
-    assert fake_client.completions.calls == [
-        {
-            "model": "gpt-5.5",
-            "messages": [
-                {"role": "system", "content": "You are terse."},
-                {"role": "user", "content": "Say hi."},
-            ],
-        }
-    ]
-```
-
-- [ ] **Step 3: Run test to verify it fails**
-
-Run: `cd poc/server && pytest tests/llm/test_openai_client.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.llm.openai_client'`
-
-- [ ] **Step 4: Implement `poc/server/src/research_authoring/llm/openai_client.py`**
-
-```python
-from typing import Callable, Protocol
-
-ChatFn = Callable[[str, str], str]
-
-
-class _ChatCompletionsLike(Protocol):
-    def create(self, **kwargs): ...
-
-
-class _ChatLike(Protocol):
-    completions: _ChatCompletionsLike
-
-
-class _ClientLike(Protocol):
-    chat: _ChatLike
-
-
-def create_openai_chat_fn(client: _ClientLike, model: str = "gpt-5.5") -> ChatFn:
-    def chat_fn(system: str, user: str) -> str:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
-        return response.choices[0].message.content or ""
-
-    return chat_fn
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `cd poc/server && pytest tests/llm/test_openai_client.py -v`
-Expected: PASS (1 test)
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add poc/server/src/research_authoring/llm/__init__.py poc/server/src/research_authoring/llm/openai_client.py poc/server/tests/llm/test_openai_client.py
-git commit -m "feat: add injectable OpenAI chat client wrapper"
-```
-
----
-
-### Task 8: Claim extractor
+### Task 7: Claim extraction (stub — no LLM calls)
 
 **Files:**
 - Create: `poc/server/src/research_authoring/eval/__init__.py`
@@ -1322,8 +1191,8 @@ git commit -m "feat: add injectable OpenAI chat client wrapper"
 - Test: `poc/server/tests/eval/test_claim_extractor.py`
 
 **Interfaces:**
-- Consumes: `ChatFn` from Task 7.
-- Produces: `extract_claims(chat_fn: ChatFn, *, generated_text: str, source_excerpt: str) -> list[dict]` (each dict has `text`, `source_excerpt` keys). Task 12 (`synthesize_artefact`) consumes this.
+- Produces: `extract_claims(*, generated_text: str, source_excerpt: str) -> list[dict]` (each dict has `text`, `source_excerpt` keys). Task 10 (`synthesize_artefact`) consumes this.
+- **This is a deliberate non-AI stub.** Per project decision, this POC makes no real LLM calls in this phase — claim decomposition is a simple deterministic sentence split, with every claim mapped to the *entire* source excerpt (since identifying which specific substring supports which claim requires the AI step this task is explicitly deferring). Wiring in a real LLM-based extractor (as originally designed) is future work once the architecture/integration is proven; the function signature is written so that swap can happen later without changing any caller.
 
 - [ ] **Step 1: Create `poc/server/src/research_authoring/eval/__init__.py`** (empty)
 
@@ -1331,386 +1200,177 @@ git commit -m "feat: add injectable OpenAI chat client wrapper"
 
 ```python
 # poc/server/tests/eval/test_claim_extractor.py
-import json
-import pytest
 from research_authoring.eval.claim_extractor import extract_claims
 
 
-def test_parses_the_json_array_of_claims_returned_by_the_chat_function():
-    def fake_chat_fn(system, user):
-        return json.dumps(
-            [
-                {"text": "Revenue grew 12% YoY.", "source_excerpt": "Revenue increased 12% year-over-year"},
-                {"text": "Gross margin was 41%.", "source_excerpt": "Gross margin of 41%"},
-            ]
-        )
-
+def test_splits_multi_sentence_text_into_one_claim_per_sentence():
     claims = extract_claims(
-        fake_chat_fn,
-        generated_text="Revenue grew 12% YoY and gross margin was 41%.",
+        generated_text="Revenue grew 12% YoY. Gross margin was 41%.",
         source_excerpt="Revenue increased 12% year-over-year on a gross margin of 41%.",
     )
 
     assert claims == [
-        {"text": "Revenue grew 12% YoY.", "source_excerpt": "Revenue increased 12% year-over-year"},
-        {"text": "Gross margin was 41%.", "source_excerpt": "Gross margin of 41%"},
+        {
+            "text": "Revenue grew 12% YoY.",
+            "source_excerpt": "Revenue increased 12% year-over-year on a gross margin of 41%.",
+        },
+        {
+            "text": "Gross margin was 41%.",
+            "source_excerpt": "Revenue increased 12% year-over-year on a gross margin of 41%.",
+        },
     ]
 
 
-def test_raises_a_clear_error_if_the_chat_function_does_not_return_valid_json():
-    def fake_chat_fn(system, user):
-        return "not json"
+def test_single_sentence_text_produces_a_single_claim():
+    claims = extract_claims(
+        generated_text="Consensus FY26 EPS is $7.42.",
+        source_excerpt="FY26 EPS estimate: 7.42",
+    )
 
-    with pytest.raises(ValueError, match="claim extraction returned invalid JSON"):
-        extract_claims(fake_chat_fn, generated_text="x", source_excerpt="y")
+    assert claims == [{"text": "Consensus FY26 EPS is $7.42.", "source_excerpt": "FY26 EPS estimate: 7.42"}]
+
+
+def test_ignores_blank_segments_from_trailing_punctuation_or_whitespace():
+    claims = extract_claims(generated_text="One claim only.   ", source_excerpt="src")
+    assert claims == [{"text": "One claim only.", "source_excerpt": "src"}]
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/eval/test_claim_extractor.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/eval/test_claim_extractor.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.eval.claim_extractor'`
 
 - [ ] **Step 4: Implement `poc/server/src/research_authoring/eval/claim_extractor.py`**
 
 ```python
-import json
-from research_authoring.llm.openai_client import ChatFn
-
-_SYSTEM_PROMPT = """You decompose generated financial-research text into atomic claims.
-Return ONLY a JSON array of objects: [{ "text": "...", "source_excerpt": "..." }].
-Each "text" is one atomic factual claim from the generated text.
-Each "source_excerpt" is the specific substring of the provided source excerpt that supports it.
-Do not include commentary, markdown, or explanation — JSON array only."""
+import re
 
 
-def extract_claims(chat_fn: ChatFn, *, generated_text: str, source_excerpt: str) -> list[dict]:
-    raw = chat_fn(
-        _SYSTEM_PROMPT,
-        f"Generated text:\n{generated_text}\n\nSource excerpt:\n{source_excerpt}",
-    )
+def extract_claims(*, generated_text: str, source_excerpt: str) -> list[dict]:
+    """Deterministic, non-AI claim decomposition (POC stub).
 
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("claim extraction returned invalid JSON")
-
-    if not isinstance(parsed, list):
-        raise ValueError("claim extraction returned invalid JSON")
-
-    return parsed
+    Splits on sentence-ending punctuation and maps every resulting claim to
+    the full source excerpt, since identifying the specific supporting
+    substring per claim is deferred to a future real (LLM-based) extractor.
+    """
+    segments = re.split(r"(?<=[.!?])\s+", generated_text.strip())
+    return [
+        {"text": segment.strip(), "source_excerpt": source_excerpt}
+        for segment in segments
+        if segment.strip()
+    ]
 ```
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/eval/test_claim_extractor.py -v`
-Expected: PASS (2 tests)
+Run: `cd poc/server && .venv/bin/pytest tests/eval/test_claim_extractor.py -v`
+Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add poc/server/src/research_authoring/eval/__init__.py poc/server/src/research_authoring/eval/claim_extractor.py poc/server/tests/eval/test_claim_extractor.py
-git commit -m "feat: add LLM-based claim extractor"
+git commit -m "feat: add deterministic (non-LLM) claim extraction stub"
 ```
 
 ---
 
-### Task 9: Groundedness eval engine
+### Task 8: Groundedness eval (stub — no LLM calls)
 
 **Files:**
 - Create: `poc/server/src/research_authoring/eval/groundedness_eval.py`
 - Test: `poc/server/tests/eval/test_groundedness_eval.py`
 
 **Interfaces:**
-- Consumes: `ChatFn` from Task 7.
-- Produces: `evaluate_claim_groundedness(chat_fn: ChatFn, *, claim_text: str, source_excerpt: str) -> dict` with keys `status` (`'grounded' | 'unsupported' | 'conflicting'`), `score` (float), `rationale` (str). Task 13 (`run_eval`) consumes this.
+- Produces: `evaluate_claim_groundedness(*, claim_text: str, source_excerpt: str) -> dict` with keys `status` (always `'grounded'` in this stub), `score` (float, always `1.0`), `rationale` (str). Task 11 (`run_eval`) consumes this.
+- **This is a deliberate non-AI stub.** Per project decision, no LLM-as-judge call is made in this phase. The function always returns a provisional "grounded" verdict with a rationale that says so explicitly — this proves the eval-gate *sequencing* (every claim gets scored, results are persisted, an eval_run_id ties them together, the artefact transitions state based on the results) without yet making any real correctness judgment. Swapping in a real LLM-judge implementation (as originally designed) is future work; the signature is unchanged from the eventual real version so no caller will need to change.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # poc/server/tests/eval/test_groundedness_eval.py
-import json
-import pytest
 from research_authoring.eval.groundedness_eval import evaluate_claim_groundedness
 
 
-def test_parses_a_grounded_verdict():
-    def fake_chat_fn(system, user):
-        return json.dumps({"status": "grounded", "score": 0.95, "rationale": "Matches source exactly."})
-
+def test_always_returns_a_provisional_grounded_verdict():
     result = evaluate_claim_groundedness(
-        fake_chat_fn, claim_text="Consensus FY26 EPS is $7.42", source_excerpt="FY26 EPS estimate: 7.42"
+        claim_text="Consensus FY26 EPS is $7.42", source_excerpt="FY26 EPS estimate: 7.42"
     )
-
-    assert result == {"status": "grounded", "score": 0.95, "rationale": "Matches source exactly."}
-
-
-def test_parses_an_unsupported_verdict():
-    def fake_chat_fn(system, user):
-        return json.dumps(
-            {"status": "unsupported", "score": 0.2, "rationale": "Source excerpt does not mention this figure."}
-        )
-
-    result = evaluate_claim_groundedness(
-        fake_chat_fn, claim_text="Revenue grew 30% YoY", source_excerpt="FY26 EPS estimate: 7.42"
-    )
-
-    assert result["status"] == "unsupported"
+    assert result["status"] == "grounded"
+    assert result["score"] == 1.0
+    assert "not yet implemented" in result["rationale"].lower() or "stub" in result["rationale"].lower()
 
 
-def test_raises_a_clear_error_on_invalid_json():
-    def fake_chat_fn(system, user):
-        return "nonsense"
-
-    with pytest.raises(ValueError, match="groundedness eval returned invalid JSON"):
-        evaluate_claim_groundedness(fake_chat_fn, claim_text="x", source_excerpt="y")
+def test_returns_the_same_stub_shape_regardless_of_input():
+    result_a = evaluate_claim_groundedness(claim_text="Anything", source_excerpt="Unrelated excerpt")
+    result_b = evaluate_claim_groundedness(claim_text="Something else entirely", source_excerpt="")
+    assert result_a == result_b
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/eval/test_groundedness_eval.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/eval/test_groundedness_eval.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.eval.groundedness_eval'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/eval/groundedness_eval.py`**
 
 ```python
-import json
-from research_authoring.llm.openai_client import ChatFn
-
-_SYSTEM_PROMPT = """You are a fact-checking judge for sell-side investment research.
-Given a CLAIM and a SOURCE EXCERPT, decide if the claim is:
-- "grounded": fully supported by the source excerpt, including any numbers, entities, and time periods matching exactly
-- "unsupported": the source excerpt does not contain evidence for the claim
-- "conflicting": the source excerpt contradicts the claim (e.g. different number, entity, or period)
-Return ONLY JSON: { "status": "...", "score": <0-1 confidence>, "rationale": "<one sentence>" }"""
+_STUB_RATIONALE = (
+    "Stub evaluation: automated groundedness checking is not yet implemented "
+    "in this POC. Claim is provisionally marked grounded pending manual "
+    "review before approval."
+)
 
 
-def evaluate_claim_groundedness(chat_fn: ChatFn, *, claim_text: str, source_excerpt: str) -> dict:
-    raw = chat_fn(_SYSTEM_PROMPT, f"CLAIM: {claim_text}\n\nSOURCE EXCERPT: {source_excerpt}")
+def evaluate_claim_groundedness(*, claim_text: str, source_excerpt: str) -> dict:
+    """Deterministic, non-AI groundedness stub (POC).
 
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("groundedness eval returned invalid JSON")
-
-    if not isinstance(parsed, dict) or "status" not in parsed or "score" not in parsed:
-        raise ValueError("groundedness eval returned invalid JSON")
-
-    return {
-        "status": parsed["status"],
-        "score": parsed["score"],
-        "rationale": parsed.get("rationale", ""),
-    }
+    Always returns a provisional 'grounded' verdict — this proves the
+    eval-gate sequencing (every claim scored, results persisted, artefact
+    transitioned) without making any real correctness judgment. A future
+    real (LLM-as-judge) implementation will replace this with the same
+    signature.
+    """
+    return {"status": "grounded", "score": 1.0, "rationale": _STUB_RATIONALE}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/eval/test_groundedness_eval.py -v`
-Expected: PASS (3 tests)
+Run: `cd poc/server && .venv/bin/pytest tests/eval/test_groundedness_eval.py -v`
+Expected: PASS (2 tests)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add poc/server/src/research_authoring/eval/groundedness_eval.py poc/server/tests/eval/test_groundedness_eval.py
-git commit -m "feat: add LLM-judge groundedness eval"
+git commit -m "feat: add deterministic (non-LLM) groundedness eval stub"
 ```
 
 ---
 
-### Task 10: FactSet client
-
-**Files:**
-- Create: `poc/server/src/research_authoring/factset/__init__.py`
-- Create: `poc/server/src/research_authoring/factset/factset_client.py`
-- Test: `poc/server/tests/factset/test_factset_client.py`
-
-**Interfaces:**
-- Produces: `create_factset_client(client_id: str, client_secret: str, base_url: str, post_fn=requests.post, get_fn=requests.get) -> FactsetClient`, where `FactsetClient.fetch_fundamentals(ticker: str) -> FundamentalsResult` (`FundamentalsResult` has `ticker`, `raw`, `retrieved_at`). Task 11 (`fetch_connector_data`) consumes this.
-- Note: FactSet's exact OAuth token endpoint path and fundamentals endpoint path depend on your organization's specific FactSet API subscription/product tier. This task implements the standard OAuth2 client-credentials flow with a configurable base URL; **before running against production FactSet, confirm the exact token and fundamentals endpoint paths from your FactSet API documentation/account team** and adjust the two path constants noted in Step 3.
-
-- [ ] **Step 1: Create `poc/server/src/research_authoring/factset/__init__.py`** (empty)
-
-- [ ] **Step 2: Write the failing test**
-
-```python
-# poc/server/tests/factset/test_factset_client.py
-import pytest
-from research_authoring.factset.factset_client import create_factset_client
-
-
-class FakeResponse:
-    def __init__(self, status_code, json_body):
-        self.status_code = status_code
-        self._json_body = json_body
-
-    def json(self):
-        return self._json_body
-
-
-def test_fetches_an_oauth2_token_then_requests_fundamentals_with_a_bearer_header():
-    post_calls = []
-    get_calls = []
-
-    def fake_post(url, data=None, **kwargs):
-        post_calls.append((url, data))
-        return FakeResponse(200, {"access_token": "test-token", "expires_in": 3600})
-
-    def fake_get(url, headers=None, **kwargs):
-        get_calls.append((url, headers))
-        return FakeResponse(200, {"data": [{"ticker": "AAPL", "epsEstimateFY26": 7.42}]})
-
-    client = create_factset_client(
-        client_id="test-id",
-        client_secret="test-secret",
-        base_url="https://api.factset.example",
-        post_fn=fake_post,
-        get_fn=fake_get,
-    )
-
-    result = client.fetch_fundamentals("AAPL")
-
-    assert post_calls[0][0] == "https://api.factset.example/oauth/token"
-    assert get_calls[0][0] == "https://api.factset.example/fundamentals/v1/AAPL"
-    assert get_calls[0][1] == {"Authorization": "Bearer test-token"}
-    assert result.ticker == "AAPL"
-    assert result.raw == {"data": [{"ticker": "AAPL", "epsEstimateFY26": 7.42}]}
-    assert result.retrieved_at
-
-
-def test_raises_a_clear_error_when_the_token_request_fails():
-    def fake_post(url, data=None, **kwargs):
-        return FakeResponse(401, {})
-
-    def fake_get(url, headers=None, **kwargs):
-        raise AssertionError("should not be called when token request fails")
-
-    client = create_factset_client(
-        client_id="bad-id",
-        client_secret="bad-secret",
-        base_url="https://api.factset.example",
-        post_fn=fake_post,
-        get_fn=fake_get,
-    )
-
-    with pytest.raises(RuntimeError, match="FactSet OAuth token request failed: 401"):
-        client.fetch_fundamentals("AAPL")
-```
-
-- [ ] **Step 3: Run test to verify it fails**
-
-Run: `cd poc/server && pytest tests/factset/test_factset_client.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.factset.factset_client'`
-
-- [ ] **Step 4: Implement `poc/server/src/research_authoring/factset/factset_client.py`**
-
-```python
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Callable
-import requests
-
-# NOTE: confirm these two path constants against your FactSet API/MCP
-# subscription's actual documentation before pointing this at production.
-_TOKEN_PATH = "/oauth/token"
-_FUNDAMENTALS_PATH = "/fundamentals/v1"
-
-
-@dataclass
-class FundamentalsResult:
-    ticker: str
-    raw: object
-    retrieved_at: str
-
-
-class FactsetClient:
-    def __init__(
-        self,
-        client_id: str,
-        client_secret: str,
-        base_url: str,
-        post_fn: Callable = requests.post,
-        get_fn: Callable = requests.get,
-    ):
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._base_url = base_url
-        self._post_fn = post_fn
-        self._get_fn = get_fn
-
-    def _get_access_token(self) -> str:
-        response = self._post_fn(
-            f"{self._base_url}{_TOKEN_PATH}",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-            },
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"FactSet OAuth token request failed: {response.status_code}")
-        return response.json()["access_token"]
-
-    def fetch_fundamentals(self, ticker: str) -> FundamentalsResult:
-        token = self._get_access_token()
-        response = self._get_fn(
-            f"{self._base_url}{_FUNDAMENTALS_PATH}/{ticker}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if response.status_code != 200:
-            raise RuntimeError(f"FactSet fundamentals request failed: {response.status_code}")
-        return FundamentalsResult(
-            ticker=ticker,
-            raw=response.json(),
-            retrieved_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-
-def create_factset_client(
-    client_id: str,
-    client_secret: str,
-    base_url: str,
-    post_fn: Callable = requests.post,
-    get_fn: Callable = requests.get,
-) -> FactsetClient:
-    return FactsetClient(client_id, client_secret, base_url, post_fn, get_fn)
-```
-
-- [ ] **Step 5: Run test to verify it passes**
-
-Run: `cd poc/server && pytest tests/factset/test_factset_client.py -v`
-Expected: PASS (2 tests)
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add poc/server/src/research_authoring/factset/__init__.py poc/server/src/research_authoring/factset/factset_client.py poc/server/tests/factset/test_factset_client.py
-git commit -m "feat: add FactSet OAuth2 client with injectable post/get functions"
-```
-
----
-
-### Task 11: Tools — `ingest_document` and `fetch_connector_data`
+### Task 9: Tools — `ingest_document` and `ingest_connector_result`
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/__init__.py`
 - Create: `poc/server/src/research_authoring/tools/ingest_document.py`
-- Create: `poc/server/src/research_authoring/tools/fetch_factset_data.py`
-- Test: `poc/server/tests/tools/test_ingest_and_factset.py`
+- Create: `poc/server/src/research_authoring/tools/ingest_connector_result.py`
+- Test: `poc/server/tests/tools/test_ingest_tools.py`
 
 **Interfaces:**
-- Consumes: `create_source` (Task 3), `write_audit_entry` (Task 6), `FactsetClient`-shaped object (Task 10, duck-typed with `fetch_fundamentals`).
-- Produces: `ingest_document(db, *, retrieved_by, context, raw_content_ref, external_url=None) -> Source`; `fetch_connector_data(db, factset_client, *, retrieved_by, ticker) -> Source`. Task 12 (`synthesize_artefact`) consumes `Source` objects these produce.
+- Consumes: `create_source` (Task 3), `write_audit_entry` (Task 6).
+- Produces: `ingest_document(db, *, retrieved_by, context, raw_content_ref, external_url=None) -> Source` (`type="upload"`); `ingest_connector_result(db, *, retrieved_by, connector_name, context, raw_content_ref) -> Source` (`type=f"connector:{connector_name}"`). Task 10 (`synthesize_artefact`) consumes `Source` objects these produce.
+- **Architecture note:** this POC does **not** call FactSet's (or any) API directly. FactSet data is fetched entirely by FactSet's *own* MCP connector, configured directly in ChatGPT alongside our app — our server never sees FactSet's API. `ingest_connector_result` is how content that a ChatGPT-native connector (FactSet, and later others like LSEG) already retrieved gets captured into our governed `Source`/provenance model, tagged with which connector it came from. This mirrors how native ChatGPT web search results are captured via `ingest_document` — in both cases, ChatGPT already did the fetching; our tool's job is only to register the result with provenance before anything downstream (synthesis, eval, citations) is allowed to use it.
 
 - [ ] **Step 1: Create `poc/server/src/research_authoring/tools/__init__.py`** (empty)
 
 - [ ] **Step 2: Write the failing test**
 
 ```python
-# poc/server/tests/tools/test_ingest_and_factset.py
-import json
+# poc/server/tests/tools/test_ingest_tools.py
 from research_authoring.db.connection import create_db
 from research_authoring.db.audit_repository import get_audit_trail_for_target
 from research_authoring.tools.ingest_document import ingest_document
-from research_authoring.tools.fetch_factset_data import fetch_connector_data
+from research_authoring.tools.ingest_connector_result import ingest_connector_result
 
 
 def test_ingest_document_creates_an_upload_source_and_an_audit_entry(tmp_path):
@@ -1729,34 +1389,28 @@ def test_ingest_document_creates_an_upload_source_and_an_audit_entry(tmp_path):
     assert trail[0].action == "ingest_document"
 
 
-def test_fetch_connector_data_fetches_factset_fundamentals_and_stores_as_a_connector_source(tmp_path):
+def test_ingest_connector_result_tags_the_source_with_the_connector_name_and_writes_an_audit_entry(tmp_path):
     db = create_db(str(tmp_path / "test.db"))
 
-    class FakeFactsetClient:
-        def fetch_fundamentals(self, ticker):
-            class Result:
-                pass
-
-            r = Result()
-            r.ticker = ticker
-            r.raw = {"epsEstimateFY26": 7.42}
-            r.retrieved_at = "2026-07-24T12:00:00Z"
-            return r
-
-    source = fetch_connector_data(db, FakeFactsetClient(), retrieved_by="analyst-1", ticker="AAPL")
+    source = ingest_connector_result(
+        db,
+        retrieved_by="analyst-1",
+        connector_name="factset",
+        context="FactSet fundamentals for AAPL, fetched via ChatGPT's FactSet connector",
+        raw_content_ref='{"epsEstimateFY26": 7.42}',
+    )
 
     assert source.type == "connector:factset"
     assert "AAPL" in source.context
-    assert json.loads(source.raw_content_ref) == {"epsEstimateFY26": 7.42}
 
     trail = get_audit_trail_for_target(db, "source", source.id)
     assert len(trail) == 1
-    assert trail[0].action == "fetch_connector_data"
+    assert trail[0].action == "ingest_connector_result"
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_ingest_and_factset.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_ingest_tools.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.ingest_document'`
 
 - [ ] **Step 4: Implement `poc/server/src/research_authoring/tools/ingest_document.py`**
@@ -1802,44 +1456,42 @@ def ingest_document(
     return source
 ```
 
-- [ ] **Step 5: Implement `poc/server/src/research_authoring/tools/fetch_factset_data.py`**
+- [ ] **Step 5: Implement `poc/server/src/research_authoring/tools/ingest_connector_result.py`**
 
 ```python
-import json
 import sqlite3
-from typing import Protocol
+from datetime import datetime, timezone
 from research_authoring.db.source_repository import create_source
 from research_authoring.db.audit_repository import write_audit_entry
 from research_authoring.db.types import Source
 
 
-class FactsetClientLike(Protocol):
-    def fetch_fundamentals(self, ticker: str): ...
-
-
-def fetch_connector_data(
+def ingest_connector_result(
     db: sqlite3.Connection,
-    factset_client: FactsetClientLike,
     *,
     retrieved_by: str,
-    ticker: str,
+    connector_name: str,
+    context: str,
+    raw_content_ref: str,
 ) -> Source:
-    result = factset_client.fetch_fundamentals(ticker)
-
+    """Register content a ChatGPT-native connector (e.g. FactSet) already
+    fetched. Our server never calls the connector's underlying API itself —
+    it only captures and governs whatever the connector returned into the
+    conversation."""
     source = create_source(
         db,
-        type="connector:factset",
-        retrieved_at=result.retrieved_at,
+        type=f"connector:{connector_name}",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
         retrieved_by=retrieved_by,
-        context=f"FactSet fundamentals for {ticker}",
-        raw_content_ref=json.dumps(result.raw),
+        context=context,
+        raw_content_ref=raw_content_ref,
         external_url=None,
     )
 
     write_audit_entry(
         db,
         actor=retrieved_by,
-        action="fetch_connector_data",
+        action="ingest_connector_result",
         target_type="source",
         target_id=source.id,
         target_version=None,
@@ -1852,27 +1504,27 @@ def fetch_connector_data(
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_ingest_and_factset.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_ingest_tools.py -v`
 Expected: PASS (2 tests)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add poc/server/src/research_authoring/tools/__init__.py poc/server/src/research_authoring/tools/ingest_document.py poc/server/src/research_authoring/tools/fetch_factset_data.py poc/server/tests/tools/test_ingest_and_factset.py
-git commit -m "feat: add ingest_document and fetch_connector_data tools"
+git add poc/server/src/research_authoring/tools/__init__.py poc/server/src/research_authoring/tools/ingest_document.py poc/server/src/research_authoring/tools/ingest_connector_result.py poc/server/tests/tools/test_ingest_tools.py
+git commit -m "feat: add ingest_document and ingest_connector_result tools"
 ```
 
 ---
 
-### Task 12: Tool — `synthesize_artefact`
+### Task 10: Tool — `synthesize_artefact`
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/synthesize_artefact.py`
 - Test: `poc/server/tests/tools/test_synthesize_artefact.py`
 
 **Interfaces:**
-- Consumes: `extract_claims` (Task 8), `create_claim` (Task 3), `create_artefact` (Task 4), `write_audit_entry` (Task 6), `Source` (Task 3), `ChatFn` (Task 7).
-- Produces: `synthesize_artefact(db, chat_fn, *, actor, type, generated_text, source) -> Artefact`. Task 13 (`run_eval`) consumes the returned `Artefact`.
+- Consumes: `extract_claims` (Task 7, stub — no LLM), `create_claim` (Task 3), `create_artefact` (Task 4), `write_audit_entry` (Task 6), `Source` (Task 3).
+- Produces: `synthesize_artefact(db, *, actor, type, generated_text, source) -> Artefact`. Task 11 (`run_eval`) consumes the returned `Artefact`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1897,17 +1549,11 @@ def test_extracts_claims_persists_them_linked_to_the_source_and_creates_a_draft_
         external_url=None,
     )
 
-    def fake_chat_fn(system, user):
-        return json.dumps(
-            [{"text": "Consensus FY26 EPS is $7.42", "source_excerpt": "epsEstimateFY26: 7.42"}]
-        )
-
     artefact = synthesize_artefact(
         db,
-        fake_chat_fn,
         actor="analyst-1",
         type="data_extract",
-        generated_text="Consensus FY26 EPS is $7.42",
+        generated_text="Consensus FY26 EPS is $7.42.",
         source=source,
     )
 
@@ -1922,14 +1568,13 @@ def test_extracts_claims_persists_them_linked_to_the_source_and_creates_a_draft_
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_synthesize_artefact.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_synthesize_artefact.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.synthesize_artefact'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/synthesize_artefact.py`**
 
 ```python
 import sqlite3
-from research_authoring.llm.openai_client import ChatFn
 from research_authoring.eval.claim_extractor import extract_claims
 from research_authoring.db.claim_repository import create_claim
 from research_authoring.db.artefact_repository import create_artefact
@@ -1939,16 +1584,13 @@ from research_authoring.db.types import Artefact, Source
 
 def synthesize_artefact(
     db: sqlite3.Connection,
-    chat_fn: ChatFn,
     *,
     actor: str,
     type: str,
     generated_text: str,
     source: Source,
 ) -> Artefact:
-    extracted = extract_claims(
-        chat_fn, generated_text=generated_text, source_excerpt=source.raw_content_ref
-    )
+    extracted = extract_claims(generated_text=generated_text, source_excerpt=source.raw_content_ref)
 
     claims = [
         create_claim(
@@ -1989,33 +1631,32 @@ def synthesize_artefact(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_synthesize_artefact.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_synthesize_artefact.py -v`
 Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add poc/server/src/research_authoring/tools/synthesize_artefact.py poc/server/tests/tools/test_synthesize_artefact.py
-git commit -m "feat: add synthesize_artefact tool"
+git commit -m "feat: add synthesize_artefact tool (uses stub claim extractor)"
 ```
 
 ---
 
-### Task 13: Tool — `run_eval`
+### Task 11: Tool — `run_eval`
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/run_eval.py`
 - Test: `poc/server/tests/tools/test_run_eval.py`
 
 **Interfaces:**
-- Consumes: `evaluate_claim_groundedness` (Task 9), `get_claim`/`update_claim_eval` (Task 3), `get_latest_artefact`/`create_artefact_version` (Task 4), `write_audit_entry` (Task 6).
-- Produces: `run_eval(db, chat_fn, *, actor, artefact_id) -> tuple[Artefact, str]` (artefact, eval_run_id) — evaluates every claim on the artefact's latest version, moves the artefact to `pending_approval` if all claims are grounded, or leaves it `draft` (with claims flagged) if any are unsupported/conflicting. Task 14 (`approve_artefact`) consumes the returned `Artefact`.
+- Consumes: `evaluate_claim_groundedness` (Task 8, stub — no LLM), `get_claim`/`update_claim_eval` (Task 3), `get_latest_artefact`/`create_artefact_version` (Task 4), `write_audit_entry` (Task 6).
+- Produces: `run_eval(db, *, actor, artefact_id) -> tuple[Artefact, str]` (artefact, eval_run_id) — evaluates every claim on the artefact's latest version, moves the artefact to `pending_approval` if all claims are grounded, or leaves it `draft` (with claims flagged) if any are unsupported/conflicting. Since Task 8's eval is currently a stub that always returns "grounded", every artefact will currently transition to `pending_approval` — this task proves the *sequencing* (per-claim scoring, eval_run_id tracking, state transition, audit trail), not real correctness judgment. Task 12 (`approve_artefact`) consumes the returned `Artefact`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # poc/server/tests/tools/test_run_eval.py
-import json
 from research_authoring.db.connection import create_db
 from research_authoring.db.source_repository import create_source
 from research_authoring.db.claim_repository import create_claim, get_claim
@@ -2024,70 +1665,38 @@ from research_authoring.db.audit_repository import get_audit_trail_for_target
 from research_authoring.tools.run_eval import run_eval
 
 
-def _setup_artefact_with_claim(db, grounded: bool):
+def test_moves_the_artefact_to_pending_approval_after_evaluating_every_claim(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
     source = create_source(
-        db,
-        type="connector:factset",
-        retrieved_at="2026-07-24T12:00:00Z",
-        retrieved_by="analyst-1",
-        context="FactSet fundamentals for AAPL",
-        raw_content_ref="epsEstimateFY26: 7.42",
-        external_url=None,
+        db, type="connector:factset", retrieved_at="2026-07-24T12:00:00Z",
+        retrieved_by="analyst-1", context="FactSet fundamentals for AAPL",
+        raw_content_ref="epsEstimateFY26: 7.42", external_url=None,
     )
     claim = create_claim(
-        db,
-        text="Consensus FY26 EPS is $7.42" if grounded else "Revenue grew 30% YoY",
-        source_id=source.id,
-        source_excerpt="epsEstimateFY26: 7.42",
-        eval_status="pending",
-        eval_score=None,
-        eval_run_id=None,
+        db, text="Consensus FY26 EPS is $7.42", source_id=source.id,
+        source_excerpt="epsEstimateFY26: 7.42", eval_status="pending",
+        eval_score=None, eval_run_id=None,
     )
     artefact = create_artefact(
-        db,
-        type="data_extract",
-        content=claim.text,
-        claim_ids=[claim.id],
-        status="draft",
-        approved_by=None,
-        approved_at=None,
+        db, type="data_extract", content=claim.text, claim_ids=[claim.id],
+        status="draft", approved_by=None, approved_at=None,
     )
-    return artefact, claim
 
-
-def test_moves_the_artefact_to_pending_approval_when_all_claims_are_grounded(tmp_path):
-    db = create_db(str(tmp_path / "test.db"))
-    artefact, claim = _setup_artefact_with_claim(db, grounded=True)
-
-    def fake_chat_fn(system, user):
-        return json.dumps({"status": "grounded", "score": 0.9, "rationale": "Matches."})
-
-    updated_artefact, eval_run_id = run_eval(db, fake_chat_fn, actor="analyst-1", artefact_id=artefact.id)
+    updated_artefact, eval_run_id = run_eval(db, actor="analyst-1", artefact_id=artefact.id)
 
     assert updated_artefact.status == "pending_approval"
     assert updated_artefact.version == 2
-    assert get_claim(db, claim.id).eval_status == "grounded"
+    updated_claim = get_claim(db, claim.id)
+    assert updated_claim.eval_status == "grounded"
+    assert updated_claim.eval_run_id == eval_run_id
 
     trail = get_audit_trail_for_target(db, "artefact", artefact.id)
-    assert any(e.action == "run_eval" for e in trail)
-
-
-def test_keeps_the_artefact_in_draft_when_a_claim_is_unsupported(tmp_path):
-    db = create_db(str(tmp_path / "test.db"))
-    artefact, claim = _setup_artefact_with_claim(db, grounded=False)
-
-    def fake_chat_fn(system, user):
-        return json.dumps({"status": "unsupported", "score": 0.2, "rationale": "No evidence."})
-
-    updated_artefact, _eval_run_id = run_eval(db, fake_chat_fn, actor="analyst-1", artefact_id=artefact.id)
-
-    assert updated_artefact.status == "draft"
-    assert get_claim(db, claim.id).eval_status == "unsupported"
+    assert any(e.action == "run_eval" and e.eval_run_id == eval_run_id for e in trail)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_run_eval.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_run_eval.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.run_eval'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/run_eval.py`**
@@ -2096,7 +1705,6 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.too
 import json
 import sqlite3
 import uuid
-from research_authoring.llm.openai_client import ChatFn
 from research_authoring.eval.groundedness_eval import evaluate_claim_groundedness
 from research_authoring.db.claim_repository import get_claim, update_claim_eval
 from research_authoring.db.artefact_repository import get_latest_artefact, create_artefact_version
@@ -2104,9 +1712,7 @@ from research_authoring.db.audit_repository import write_audit_entry
 from research_authoring.db.types import Artefact
 
 
-def run_eval(
-    db: sqlite3.Connection, chat_fn: ChatFn, *, actor: str, artefact_id: str
-) -> tuple[Artefact, str]:
+def run_eval(db: sqlite3.Connection, *, actor: str, artefact_id: str) -> tuple[Artefact, str]:
     artefact = get_latest_artefact(db, artefact_id)
     if artefact is None:
         raise ValueError(f"Artefact {artefact_id} not found")
@@ -2119,9 +1725,7 @@ def run_eval(
         if claim is None:
             raise ValueError(f"Claim {claim_id} not found")
 
-        verdict = evaluate_claim_groundedness(
-            chat_fn, claim_text=claim.text, source_excerpt=claim.source_excerpt
-        )
+        verdict = evaluate_claim_groundedness(claim_text=claim.text, source_excerpt=claim.source_excerpt)
         update_claim_eval(db, claim.id, verdict["status"], verdict["score"], eval_run_id)
         if verdict["status"] != "grounded":
             all_grounded = False
@@ -2146,19 +1750,19 @@ def run_eval(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_run_eval.py -v`
-Expected: PASS (2 tests)
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_run_eval.py -v`
+Expected: PASS (1 test)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add poc/server/src/research_authoring/tools/run_eval.py poc/server/tests/tools/test_run_eval.py
-git commit -m "feat: add run_eval tool gating artefacts on claim groundedness"
+git commit -m "feat: add run_eval tool (uses stub groundedness eval)"
 ```
 
 ---
 
-### Task 14: Tool — `approve_artefact`
+### Task 12: Tool — `approve_artefact`
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/approve_artefact.py`
@@ -2166,7 +1770,7 @@ git commit -m "feat: add run_eval tool gating artefacts on claim groundedness"
 
 **Interfaces:**
 - Consumes: `get_latest_artefact`/`create_artefact_version` (Task 4), `write_audit_entry` (Task 6).
-- Produces: `approve_artefact(db, *, actor, artefact_id, decision) -> Artefact` — `decision` is `'approve'` or `'reject'`; raises `ValueError` if the artefact is not `pending_approval`. Task 15 (`draft_section`) consumes only `approved` artefacts.
+- Produces: `approve_artefact(db, *, actor, artefact_id, decision) -> Artefact` — `decision` is `'approve'` or `'reject'`; raises `ValueError` if the artefact is not `pending_approval`. Task 13 (`draft_section`) consumes only `approved` artefacts.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2221,7 +1825,7 @@ def test_raises_if_the_artefact_is_not_pending_approval(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_approve_artefact.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_approve_artefact.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.approve_artefact'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/approve_artefact.py`**
@@ -2269,7 +1873,7 @@ def approve_artefact(
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_approve_artefact.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_approve_artefact.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 5: Commit**
@@ -2281,7 +1885,7 @@ git commit -m "feat: add approve_artefact human-in-the-loop tool"
 
 ---
 
-### Task 15: Tools — `draft_section` and `commit_section`
+### Task 13: Tools — `draft_section` and `commit_section`
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/draft_section.py`
@@ -2290,7 +1894,7 @@ git commit -m "feat: add approve_artefact human-in-the-loop tool"
 
 **Interfaces:**
 - Consumes: `get_latest_artefact` (Task 4), `create_report_section`/`get_latest_report_section`/`create_report_section_version` (Task 5), `get_latest_report`/`create_report_version` (Task 5), `write_audit_entry` (Task 6).
-- Produces: `draft_section(*, report_id, section_type, approved_artefacts) -> dict` (keys `section_type`, `draft_content`, `claim_ids`; a pure text-assembly helper, no DB write — represents the in-chat draft before commit); `commit_section(db, *, actor, report_id, section_type, content, claim_ids, existing_section_id=None) -> ReportSection` (creates or versions a `ReportSection` and appends its id to the `Report`'s `section_ids` if new). Task 16 (`assemble_report`) consumes the `Report`/`ReportSection` state this produces.
+- Produces: `draft_section(*, report_id, section_type, approved_artefacts) -> dict` (keys `section_type`, `draft_content`, `claim_ids`; a pure text-assembly helper, no DB write — represents the in-chat draft before commit); `commit_section(db, *, actor, report_id, section_type, content, claim_ids, existing_section_id=None) -> ReportSection` (creates or versions a `ReportSection` and appends its id to the `Report`'s `section_ids` if new). Task 14 (`assemble_report`) consumes the `Report`/`ReportSection` state this produces.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2376,7 +1980,7 @@ def test_commit_section_versions_an_existing_section_without_duplicating_the_rep
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_draft_and_commit_section.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_draft_and_commit_section.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.draft_section'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/draft_section.py`**
@@ -2461,7 +2065,7 @@ def commit_section(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_draft_and_commit_section.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_draft_and_commit_section.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
@@ -2473,7 +2077,7 @@ git commit -m "feat: add draft_section and commit_section tools"
 
 ---
 
-### Task 16: Tools — `assemble_report` and `export_report` (Markdown)
+### Task 14: Tools — `assemble_report` and `export_report` (Markdown)
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/assemble_report.py`
@@ -2511,7 +2115,7 @@ def _setup_two_section_report(db):
     claim = create_claim(
         db, text="Consensus FY26 EPS is $7.42", source_id=source.id,
         source_excerpt="epsEstimateFY26: 7.42", eval_status="grounded",
-        eval_score=0.94, eval_run_id="eval-run-1",
+        eval_score=1.0, eval_run_id="eval-run-1",
     )
 
     report = create_report(db, "equity-initiation-v1")
@@ -2578,7 +2182,7 @@ def test_export_report_to_markdown_renders_sections_in_order_with_a_footnote_cit
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd poc/server && pytest tests/tools/test_assemble_and_export_report.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_assemble_and_export_report.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'research_authoring.tools.assemble_report'`
 
 - [ ] **Step 3: Implement `poc/server/src/research_authoring/tools/assemble_report.py`**
@@ -2703,7 +2307,7 @@ def export_report_to_markdown(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd poc/server && pytest tests/tools/test_assemble_and_export_report.py -v`
+Run: `cd poc/server && .venv/bin/pytest tests/tools/test_assemble_and_export_report.py -v`
 Expected: PASS (3 tests)
 
 - [ ] **Step 6: Commit**
@@ -2715,17 +2319,18 @@ git commit -m "feat: add assemble_report and export_report (Markdown) tools"
 
 ---
 
-### Task 17: MCP server — register all tools and the widget resource
+### Task 15: MCP server — register all tools
 
 **Files:**
 - Create: `poc/server/src/research_authoring/tools/register_tools.py`
 - Create: `poc/server/src/research_authoring/server.py`
 
 **Interfaces:**
-- Consumes: every tool function from Tasks 11–16, `create_db` (Task 2), `create_openai_chat_fn` (Task 7), `create_factset_client` (Task 10).
-- Produces: a running MCP server (streamable HTTP transport, via `FastMCP`) with all nine tools registered. Task 18 (widget resource + static hosting) and Task 19 (Skill + manual e2e) consume this running server.
+- Consumes: every tool function from Tasks 9–14, `create_db` (Task 2).
+- Produces: a running MCP server (streamable HTTP transport, via `FastMCP`) with all nine tools registered. Task 16 (widget resource + static hosting) and Task 17 (Skill + manual e2e) consume this running server.
+- **No OpenAI or FactSet client is constructed here** — this server makes no LLM calls (Tasks 7–8 are deterministic stubs) and never talks to FactSet's API directly (FactSet access happens entirely via FactSet's own ChatGPT connector, captured through `ingest_connector_result_tool`).
 
-This task is registration/wiring rather than new business logic, so it's verified by manual inspection rather than a unit test — the logic underneath is already covered by Tasks 3–16. **Note:** the exact decorator/annotation API of the `mcp` package's `FastMCP` (e.g. how tool annotations like "requires approval" are expressed) may have moved since this plan was written — check https://github.com/modelcontextprotocol/python-sdk for the current API before wiring `approve_artefact_tool`'s annotation if the code below doesn't match what's installed.
+This task is registration/wiring rather than new business logic, so it's verified by manual inspection rather than a unit test — the logic underneath is already covered by Tasks 3–14. **Note:** the exact decorator/annotation API of the `mcp` package's `FastMCP` may have moved since this plan was written — check https://github.com/modelcontextprotocol/python-sdk for the current API if the code below doesn't match what's installed.
 
 - [ ] **Step 1: Implement `poc/server/src/research_authoring/tools/register_tools.py`**
 
@@ -2735,12 +2340,9 @@ import sqlite3
 from dataclasses import asdict
 from typing import Optional
 from mcp.server.fastmcp import FastMCP
-from research_authoring.llm.openai_client import ChatFn
-from research_authoring.factset.factset_client import FactsetClient
-from research_authoring.db.source_repository import get_source
 from research_authoring.db.artefact_repository import get_latest_artefact
 from research_authoring.tools.ingest_document import ingest_document
-from research_authoring.tools.fetch_factset_data import fetch_connector_data
+from research_authoring.tools.ingest_connector_result import ingest_connector_result
 from research_authoring.tools.synthesize_artefact import synthesize_artefact
 from research_authoring.tools.run_eval import run_eval
 from research_authoring.tools.approve_artefact import approve_artefact
@@ -2750,12 +2352,7 @@ from research_authoring.tools.assemble_report import assemble_report
 from research_authoring.tools.export_report import export_report_to_markdown
 
 
-def register_tools(
-    mcp: FastMCP,
-    db: sqlite3.Connection,
-    chat_fn: ChatFn,
-    factset_client: FactsetClient,
-) -> None:
+def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
     @mcp.tool(description="Register an analyst-uploaded document as a Source.")
     def ingest_document_tool(
         actor: str, context: str, raw_content_ref: str, external_url: Optional[str] = None
@@ -2766,24 +2363,35 @@ def register_tools(
         )
         return json.dumps(asdict(source))
 
-    @mcp.tool(description="Fetch FactSet fundamentals for a ticker and register as a Source.")
-    def fetch_connector_data_tool(actor: str, ticker: str) -> str:
-        source = fetch_connector_data(db, factset_client, retrieved_by=actor, ticker=ticker)
+    @mcp.tool(
+        description=(
+            "Register content already fetched by a ChatGPT-native connector (e.g. FactSet) "
+            "as a governed Source. Call this immediately after using the connector's own "
+            "tool(s), before synthesizing any artefact from the result."
+        )
+    )
+    def ingest_connector_result_tool(
+        actor: str, connector_name: str, context: str, raw_content_ref: str
+    ) -> str:
+        source = ingest_connector_result(
+            db, retrieved_by=actor, connector_name=connector_name, context=context,
+            raw_content_ref=raw_content_ref,
+        )
         return json.dumps(asdict(source))
 
     @mcp.tool(description="Draft an intermediate artefact from a source, decomposed into cited claims.")
     def synthesize_artefact_tool(actor: str, type: str, generated_text: str, source_id: str) -> str:
+        from research_authoring.db.source_repository import get_source
+
         source = get_source(db, source_id)
         if source is None:
             raise ValueError(f"Source {source_id} not found")
-        artefact = synthesize_artefact(
-            db, chat_fn, actor=actor, type=type, generated_text=generated_text, source=source
-        )
+        artefact = synthesize_artefact(db, actor=actor, type=type, generated_text=generated_text, source=source)
         return json.dumps(asdict(artefact))
 
     @mcp.tool(description="Run the groundedness eval gate on an artefact before it can be approved.")
     def run_eval_tool(actor: str, artefact_id: str) -> str:
-        artefact, eval_run_id = run_eval(db, chat_fn, actor=actor, artefact_id=artefact_id)
+        artefact, eval_run_id = run_eval(db, actor=actor, artefact_id=artefact_id)
         return json.dumps({"artefact": asdict(artefact), "eval_run_id": eval_run_id})
 
     @mcp.tool(description="Human approval gate: approve or reject a pending_approval artefact.")
@@ -2837,54 +2445,45 @@ def register_tools(
 ```python
 import os
 from dotenv import load_dotenv
-import openai
 from mcp.server.fastmcp import FastMCP
 from research_authoring.db.connection import create_db
-from research_authoring.llm.openai_client import create_openai_chat_fn
-from research_authoring.factset.factset_client import create_factset_client
 from research_authoring.tools.register_tools import register_tools
 
 load_dotenv()
 
+os.makedirs(os.path.dirname(os.environ.get("DB_PATH", "./data/poc.db")) or ".", exist_ok=True)
 db = create_db(os.environ.get("DB_PATH", "./data/poc.db"))
-openai_client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-chat_fn = create_openai_chat_fn(openai_client)
-factset_client = create_factset_client(
-    client_id=os.environ.get("FACTSET_CLIENT_ID", ""),
-    client_secret=os.environ.get("FACTSET_CLIENT_SECRET", ""),
-    base_url=os.environ.get("FACTSET_API_BASE_URL", "https://api.factset.com"),
-)
 
 mcp = FastMCP("research-authoring-poc")
-register_tools(mcp, db, chat_fn, factset_client)
+register_tools(mcp, db)
 
 if __name__ == "__main__":
     # Bind host/port explicitly rather than relying on FastMCP defaults: Render
     # (and most PaaS hosts) require binding 0.0.0.0 and the port they inject via
-    # the PORT env var, not localhost/a hardcoded port. See Task 20 for the full
+    # the PORT env var, not localhost/a hardcoded port. See Task 18 for the full
     # Render deployment configuration.
     mcp.run(transport="streamable-http", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 ```
 
 - [ ] **Step 3: Verify the server starts and lists tools**
 
-Run: `cd poc/server && mkdir -p data && PORT=8000 python -m research_authoring.server`
+Run: `cd poc/server && PORT=8000 .venv/bin/python -m research_authoring.server`
 Expected console output confirming the MCP server is listening on `0.0.0.0:8000` (exact log line depends on the installed `mcp` version). **Note:** check that the installed `mcp` version's `FastMCP.run(...)` actually accepts `host`/`port` keyword arguments for the `streamable-http` transport — if it doesn't, use the underlying ASGI app (`mcp.streamable_http_app()`) with `uvicorn.run(app, host="0.0.0.0", port=...)` instead, per the current `mcp` SDK docs at https://github.com/modelcontextprotocol/python-sdk.
 
 In a second terminal, use the MCP inspector to confirm all nine tools are registered:
 Run: `npx @modelcontextprotocol/inspector`, then point it at the running server's URL.
-Expected: inspector UI lists `ingest_document_tool`, `fetch_connector_data_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`.
+Expected: inspector UI lists `ingest_document_tool`, `ingest_connector_result_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add poc/server/src/research_authoring/tools/register_tools.py poc/server/src/research_authoring/server.py
-git commit -m "feat: wire FastMCP server with all nine tools"
+git commit -m "feat: wire FastMCP server with all nine tools (no LLM/FactSet clients)"
 ```
 
 ---
 
-### Task 18: Apps SDK widget — report workspace (React)
+### Task 16: Apps SDK widget — report workspace (React)
 
 **Files:**
 - Create: `poc/widget/package.json`
@@ -2897,8 +2496,8 @@ git commit -m "feat: wire FastMCP server with all nine tools"
 - Modify: `poc/server/src/research_authoring/server.py` — serve the built widget bundle as static files and register it as an MCP resource
 
 **Interfaces:**
-- Consumes: the nine MCP tools registered in Task 17 (called via the widget bridge's `callTool`).
-- Produces: a fullscreen widget the ChatGPT client renders, exercised manually against ChatGPT Developer Mode in Task 19.
+- Consumes: the nine MCP tools registered in Task 15 (called via the widget bridge's `callTool`).
+- Produces: a fullscreen widget the ChatGPT client renders, exercised manually against ChatGPT Developer Mode in Task 17.
 
 This widget is the one part of the stack that must be TypeScript/React rather than Python — Apps SDK widgets render as browser content inside ChatGPT's iframe, and the MCP server (Python) only serves the built bundle and registers its resource URI. This is UI wiring against a host (ChatGPT) that can't be unit-tested outside it, so verification here is a manual smoke test, not an automated test.
 
@@ -3099,12 +2698,12 @@ def report_workspace_widget() -> str:
         return f.read()
 ```
 
-**Note:** `FastMCP`'s exact API for serving a widget's supporting static assets (e.g. `bundle.js`) alongside its HTML resource, and for setting the `text/html+skybridge` MIME type and `_meta`/`openai/outputTemplate` tool metadata pointing `run_eval_tool` and `approve_artefact_tool` at this resource, depends on the installed `mcp` package version — check https://developers.openai.com/apps-sdk/build/chatgpt-ui for the current pattern and adjust this registration accordingly before Task 19's live ChatGPT test.
+**Note:** `FastMCP`'s exact API for serving a widget's supporting static assets (e.g. `bundle.js`) alongside its HTML resource, and for setting the `text/html+skybridge` MIME type and `_meta`/`openai/outputTemplate` tool metadata pointing `run_eval_tool` and `approve_artefact_tool` at this resource, depends on the installed `mcp` package version — check https://developers.openai.com/apps-sdk/build/chatgpt-ui for the current pattern and adjust this registration accordingly before Task 17's live ChatGPT test.
 
 - [ ] **Step 10: Manual smoke test**
 
 Run: `cd poc/widget && npx serve dist` (or any static file server), then open the served URL in a browser.
-Expected: page loads without a JS error in the console other than the expected `window.openai bridge is not present` message (confirms the bridge check works outside ChatGPT; full interactive verification happens inside ChatGPT in Task 19).
+Expected: page loads without a JS error in the console other than the expected `window.openai bridge is not present` message (confirms the bridge check works outside ChatGPT; full interactive verification happens inside ChatGPT in Task 17).
 
 - [ ] **Step 11: Commit**
 
@@ -3115,13 +2714,14 @@ git commit -m "feat: add Apps SDK fullscreen widget for artefact review and appr
 
 ---
 
-### Task 19: ChatGPT Skill + end-to-end manual verification
+### Task 17: ChatGPT Skill + end-to-end manual verification
 
 **Files:**
 - Create: `poc/skill/report-authoring-skill.md`
 
 **Interfaces:**
-- Consumes: the nine tool names from Task 17 (must match exactly: `ingest_document_tool`, `fetch_connector_data_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`).
+- Consumes: the nine tool names from Task 15 (must match exactly: `ingest_document_tool`, `ingest_connector_result_tool`, `synthesize_artefact_tool`, `run_eval_tool`, `approve_artefact_tool`, `draft_section_tool`, `commit_section_tool`, `assemble_report_tool`, `export_report_tool`).
+- Also assumes FactSet's own MCP connector is separately enabled in the same ChatGPT workspace as this app.
 - Produces: a documented Skill definition plus a recorded manual end-to-end pass — the acceptance test for the whole POC.
 
 - [ ] **Step 1: Write the Skill definition `poc/skill/report-authoring-skill.md`**
@@ -3134,12 +2734,20 @@ or draft/refine a section of a sell-side equity research report.
 
 **Steps to follow, in order:**
 1. If the analyst hasn't supplied source material yet, ask whether to use an uploaded
-   document (`ingest_document_tool`) or FactSet fundamentals for a ticker
-   (`fetch_connector_data_tool`).
+   document, a ChatGPT-native connector (e.g. FactSet), or web search.
+   - For an uploaded document: call `ingest_document_tool`.
+   - For a connector (e.g. FactSet): first call the connector's own tool(s) to fetch
+     the data, then IMMEDIATELY call `ingest_connector_result_tool` with
+     `connector_name` set to that connector (e.g. `"factset"`) and the connector's
+     output as `raw_content_ref`/`context`. Never treat a connector's raw output as
+     part of the governed report until it has been ingested this way.
 2. Call `synthesize_artefact_tool` to turn source material into a cited artefact
    (`thesis_point`, `data_extract`, or `comparison_table`) — never draft analysis
    directly into chat without going through this tool first.
 3. Call `run_eval_tool` on the resulting artefact before presenting it to the analyst.
+   (Note: this POC's eval is a provisional stub that always marks claims "grounded" —
+   treat its output as a placeholder, not a real correctness guarantee, and rely on
+   the analyst's own review in the next step.)
 4. Show the analyst the artefact and its claims for review. Only call
    `approve_artefact_tool` after the analyst has explicitly approved or rejected it —
    never assume approval.
@@ -3159,25 +2767,26 @@ analyst instruction to do so — these are approval gates, not automatic steps.
 
 Follow the current instructions at https://help.openai.com/en/articles/20001066-skills-in-chatgpt to upload `poc/skill/report-authoring-skill.md` as a workspace Skill, scoped to the test user/role used for this POC.
 
-- [ ] **Step 3: Register the POC app in ChatGPT Developer Mode**
+- [ ] **Step 3: Register the POC app in ChatGPT Developer Mode, alongside FactSet's connector**
 
-Point ChatGPT Developer Mode at the running Python MCP server's URL (per current instructions at https://developers.openai.com/apps-sdk/build/chatgpt-ui). Confirm all nine tools and the `report-workspace-widget` resource appear.
+Point ChatGPT Developer Mode at the running Python MCP server's URL (per current instructions at https://developers.openai.com/apps-sdk/build/chatgpt-ui). Confirm all nine tools and the `report-workspace-widget` resource appear. Separately, ensure FactSet's own ChatGPT connector is enabled in the same workspace (per your existing FactSet/ChatGPT connector access) — this app and FactSet's connector run side by side; this app never calls FactSet's API itself.
 
 - [ ] **Step 4: Run the full end-to-end scenario manually**
 
-In a ChatGPT conversation with the POC app and Skill enabled:
-1. Ask ChatGPT to pull FactSet fundamentals for a real ticker you have access to.
-2. Ask it to synthesize a `data_extract` artefact from that data.
-3. Confirm `run_eval_tool` runs automatically (per the Skill) and the widget renders the artefact with a citation marker.
-4. Click the citation marker in the widget and confirm it shows the FactSet source excerpt.
-5. Approve the artefact from the widget; confirm its status updates to `approved`.
-6. Ask ChatGPT to draft a second section (e.g. `investment_thesis`) from an uploaded document, repeating ingest → synthesize → eval → approve.
-7. Commit both sections, then assemble and export the report; confirm the Markdown output contains both sections in order with resolved footnote citations.
-8. Query the SQLite `audit_log` table directly (`sqlite3 poc/server/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`) and confirm every step above produced an entry.
+In a ChatGPT conversation with the POC app, the Skill, and FactSet's connector all enabled:
+1. Ask ChatGPT to use the FactSet connector to fetch fundamentals for a real ticker you have access to.
+2. Confirm the Skill directs the model to call `ingest_connector_result_tool` with the FactSet connector's output before doing anything else with it.
+3. Ask it to synthesize a `data_extract` artefact from that ingested source.
+4. Confirm `run_eval_tool` runs automatically (per the Skill) and the widget renders the artefact with a citation marker.
+5. Click the citation marker in the widget and confirm it shows the source excerpt.
+6. Approve the artefact from the widget; confirm its status updates to `approved`.
+7. Ask ChatGPT to draft a second section (e.g. `investment_thesis`) from an uploaded document, repeating ingest → synthesize → eval → approve.
+8. Commit both sections, then assemble and export the report; confirm the Markdown output contains both sections in order with resolved footnote citations.
+9. Query the SQLite `audit_log` table directly (`sqlite3 poc/server/data/poc.db "SELECT actor, action, target_type, target_id, timestamp FROM audit_log ORDER BY timestamp;"`) and confirm every step above produced an entry.
 
-**Do this in one continuous session** (see Task 20): on Render's free tier the SQLite file is wiped on redeploy/restart/spin-down-wake, so pausing long enough for the instance to idle out mid-walkthrough will lose earlier state.
+**Do this in one continuous session** (see Task 18): on Render's free tier the SQLite file is wiped on redeploy/restart/spin-down-wake, so pausing long enough for the instance to idle out mid-walkthrough will lose earlier state.
 
-Expected: all nine tool calls succeed, the widget renders and updates correctly inside ChatGPT, the exported Markdown is well-formed with real FactSet-derived content and citations, and the audit log has one entry per state transition performed.
+Expected: all nine tool calls succeed, the widget renders and updates correctly inside ChatGPT, the exported Markdown is well-formed with real FactSet-derived content (fetched via ChatGPT's connector, not our server) and citations, and the audit log has one entry per state transition performed.
 
 - [ ] **Step 5: Commit**
 
@@ -3185,19 +2794,16 @@ Expected: all nine tool calls succeed, the widget renders and updates correctly 
 git add poc/skill/report-authoring-skill.md
 git commit -m "docs: add report-authoring Skill definition and record e2e POC verification"
 ```
-
----
-
-### Task 20: Render.com free-tier deployment configuration
+### Task 18: Render.com free-tier deployment configuration
 
 **Files:**
 - Create: `render.yaml`
 - Create: `poc/server/build.sh`
-- Modify: `poc/server/src/research_authoring/server.py` — already binds `0.0.0.0:$PORT` (Task 17); no further change needed here beyond verification
+- Modify: `poc/server/src/research_authoring/server.py` — already binds `0.0.0.0:$PORT` (Task 15); no further change needed here beyond verification
 - Modify: `poc/widget/build.mjs` — no code change; documented as part of the build step Render runs
 
 **Interfaces:**
-- Consumes: the Python server from Task 17 and the widget bundle from Task 18.
+- Consumes: the Python server from Task 15 and the widget bundle from Task 16.
 - Produces: a deployable configuration Render can build and run on the free plan, serving both the MCP endpoint and the widget's static assets from the one free web service.
 
 This task is deployment configuration, not application logic, so it's verified by an actual Render deploy rather than a unit test.
@@ -3234,33 +2840,19 @@ services:
     buildCommand: bash build.sh
     startCommand: python -m research_authoring.server
     envVars:
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: FACTSET_CLIENT_ID
-        sync: false
-      - key: FACTSET_CLIENT_SECRET
-        sync: false
-      - key: FACTSET_API_BASE_URL
-        value: https://api.factset.com
       - key: DB_PATH
         value: ./data/poc.db
 ```
 
-`sync: false` means Render prompts you to enter these secret values in the dashboard rather than storing them in the repo — set `OPENAI_API_KEY`, `FACTSET_CLIENT_ID`, and `FACTSET_CLIENT_SECRET` there after the first deploy.
+No secrets are needed: this POC makes no LLM calls and never talks to FactSet's API directly (FactSet access is entirely via FactSet's own ChatGPT connector, separate from this deployment).
 
 - [ ] **Step 4: Ensure the data directory exists at boot**
 
-Modify `poc/server/src/research_authoring/server.py` — add before `db = create_db(...)`:
-
-```python
-os.makedirs(os.path.dirname(os.environ.get("DB_PATH", "./data/poc.db")) or ".", exist_ok=True)
-```
-
-(Needed because Render's ephemeral filesystem starts empty on every wake/redeploy — the `data/` directory used in local dev via `mkdir -p data` won't exist there.)
+Already handled in Task 15's `server.py` (`os.makedirs(...)` runs before `create_db(...)`) — needed because Render's ephemeral filesystem starts empty on every wake/redeploy, unlike local dev.
 
 - [ ] **Step 5: Deploy and verify**
 
-Push the repository to a Git provider Render can access, create the service from `render.yaml` (Render dashboard → New → Blueprint), and set the three secret env vars when prompted.
+Push the repository to a Git provider Render can access, create the service from `render.yaml` (Render dashboard → New → Blueprint).
 
 Run (after deploy finishes): `curl -i https://<your-service>.onrender.com/` (or whatever health path the installed `mcp`/`FastMCP` version exposes)
 Expected: an HTTP response (not a connection error) confirming the service is reachable. Note the first request after idle may take up to ~50 seconds (free-tier cold start) — this is expected, not a bug; if ChatGPT's Developer Mode connection attempt times out on a cold instance, retry once the service has woken up.
@@ -3268,7 +2860,7 @@ Expected: an HTTP response (not a connection error) confirming the service is re
 - [ ] **Step 6: Commit**
 
 ```bash
-git add render.yaml poc/server/build.sh poc/server/src/research_authoring/server.py
+git add render.yaml poc/server/build.sh
 git commit -m "chore: add Render.com free-tier deployment configuration"
 ```
 
@@ -3277,30 +2869,21 @@ git commit -m "chore: add Render.com free-tier deployment configuration"
 ## Self-Review
 
 **Spec coverage:**
-- Custom widget (inline/fullscreen), React as required by the Apps SDK host — Task 18. ✓
-- MCP tool layer (all nine tools), Python via FastMCP — Tasks 11–16, 17. ✓
+- Custom widget (inline/fullscreen), React as required by the Apps SDK host — Task 16. ✓
+- MCP tool layer (all nine tools), Python via FastMCP — Tasks 9–15. ✓
 - Data model (Source/Claim/Artefact/ReportSection/Report/AuditLogEntry, versioning) — Tasks 2–6. ✓
-- Claim-level citations resolved in widget and export — Tasks 12, 16, 18. ✓
-- Approval-gated human-in-the-loop — Task 14, wired into MCP registration in Task 17. ✓
-- Groundedness eval gate before approval — Tasks 9, 13. ✓
-- FactSet real integration — Task 10, exercised live in Task 19. ✓
-- Multi-section report template — Tasks 15, 16, 19 (two distinct section types). ✓
-- Markdown export — Task 16. ✓
-- Skill wrapping the workflow — Task 19. ✓
-- Audit logging on every transition — Task 6, wired into Tasks 11–16. ✓
-- Render.com free-tier deployment (0.0.0.0/$PORT binding, ephemeral-storage handling, build/start commands) — Tasks 17, 20. ✓
-- Prompt-injection containment (ingested content treated as inert data, not instructions) — reflected in Task 11's design (raw content stored as `raw_content_ref`/`context`, never re-injected as system/instruction text) and reiterated as a "never" rule in the Task 19 Skill definition.
+- Claim-level citations resolved in widget and export — Tasks 10, 14, 16. ✓
+- Approval-gated human-in-the-loop — Task 12, wired into MCP registration in Task 15. ✓
+- Groundedness eval gate before approval — Tasks 8, 11 (both deliberately non-AI stubs per project decision — no LLM calls in this POC phase; sequencing is proven, real judgment is deferred). ✓
+- FactSet access via ChatGPT's own connector (not a direct integration owned by this server) — Task 9 (`ingest_connector_result`), exercised live in Task 17. ✓
+- Multi-section report template — Tasks 13, 14, 17 (two distinct section types). ✓
+- Markdown export — Task 14. ✓
+- Skill wrapping the workflow, including connector-then-ingest sequencing — Task 17. ✓
+- Audit logging on every transition — Task 6, wired into Tasks 9–14. ✓
+- Render.com free-tier deployment (0.0.0.0/$PORT binding, ephemeral-storage handling, build/start commands) — Tasks 15, 18. ✓
+- No LLM calls anywhere in this POC — Tasks 7, 8 are deterministic stubs; no `openai` dependency or API key is present anywhere in `poc/server`. ✓
+- Prompt-injection containment (ingested content treated as inert data, not instructions) — reflected in Task 9's design (raw content stored as `raw_content_ref`/`context`, never re-injected as system/instruction text) and reiterated as a "never" rule in the Task 17 Skill definition.
 
-**Placeholder scan:** no TBD/TODO markers; the two genuinely uncertain external dependencies — FactSet's exact endpoint paths (Task 10) and the exact `mcp`/`FastMCP` widget-resource and tool-annotation API (Tasks 17, 18) — are called out explicitly as verification steps with working default code provided, not left vague.
+**Placeholder scan:** no TBD/TODO markers; the genuinely uncertain external dependency — the exact `mcp`/`FastMCP` widget-resource and tool-annotation API (Tasks 15, 16) — is called out explicitly as a verification step with working default code provided, not left vague. The eval/claim-extraction stubs (Tasks 7, 8) are not placeholders in the forbidden sense: they're fully implemented, tested, deterministic functions — just not AI-based ones, by explicit project decision, with their non-AI nature documented in both the code and this plan.
 
-**Type consistency:** `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` dataclasses defined once in Task 2's `types.py` and referenced identically (same field names) by every later task; tool function names registered in Task 17 (`*_tool` suffix) match what Task 18's widget and Task 19's Skill call exactly.
-
----
-
-Plan complete and saved to `docs/superpowers/plans/2026-07-24-research-authoring-poc.md`. Two execution options:
-
-**1. Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration
-
-**2. Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints
-
-**Which approach?**
+**Type consistency:** `Source`, `Claim`, `Artefact`, `ReportSection`, `Report`, `AuditLogEntry` dataclasses defined once in Task 2's `types.py` and referenced identically (same field names) by every later task; tool function names registered in Task 15 (`*_tool` suffix) match what Task 16's widget and Task 17's Skill call exactly.
