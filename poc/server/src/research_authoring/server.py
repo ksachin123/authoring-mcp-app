@@ -1,4 +1,3 @@
-import hashlib
 import logging
 import os
 from dotenv import load_dotenv
@@ -57,26 +56,23 @@ for _asset in ("index.html", "bundle.js"):
         logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
 
 
-def _compute_widget_uri(widget_dist: str) -> str:
-    # ChatGPT appears to cache widget resource content by URI, sometimes
-    # even across what should be fresh conversations/reconnects (confirmed
-    # live twice: a stale render reappeared verbatim, and a CSS/layout fix
-    # that was verifiably live server-side rendered identically to before
-    # the fix). Deriving the URI from a content hash means every new deploy
-    # with a changed widget automatically gets a fresh URI -- no stale cache
-    # to hit, and no need to remember to hand-bump a version suffix.
-    try:
-        with open(os.path.join(widget_dist, "index.html"), "rb") as f:
-            index_bytes = f.read()
-        with open(os.path.join(widget_dist, "bundle.js"), "rb") as f:
-            bundle_bytes = f.read()
-    except FileNotFoundError:
-        return "ui://widget/report-workspace-unbuilt.html"
-    digest = hashlib.sha256(index_bytes + bundle_bytes).hexdigest()[:12]
-    return f"ui://widget/report-workspace-{digest}.html"
-
-
-_WIDGET_URI = _compute_widget_uri(_WIDGET_DIST)
+# REVERTED a content-hash-derived URI (e.g. "report-workspace-<sha>.html").
+# The theory was that a fresh URI per deploy would prevent ChatGPT from ever
+# showing stale cached widget content -- but after deploying it, EVERY
+# run_eval_tool call started returning "Error loading app: Failed to fetch
+# template" in ChatGPT, 100% reproducibly, across multiple fresh
+# conversations, while resources/read for that exact URI kept succeeding
+# perfectly over raw MCP calls (verified directly: 200, correct mimeType,
+# correct 1MB+ content, clean URI with no hidden characters). That split --
+# server provably correct, ChatGPT consistently refusing to fetch -- points
+# to ChatGPT's Developer Mode binding/pinning the widget's resource URI to
+# the connector at connect-time rather than re-discovering it on every tool
+# call, so a URI that changes on every deploy breaks resolution entirely
+# instead of solving the staleness problem. Back to a fixed URI; the actual
+# fix for stale widget content is reconnecting the app in ChatGPT after a
+# widget change (which is what got the widget rendering at all earlier in
+# this debugging session), not changing the URI server-side.
+_WIDGET_URI = "ui://widget/report-workspace.html"
 logger.info("widget resource uri: %s", _WIDGET_URI)
 
 # NOTE: deviation from the task brief. The installed mcp SDK's FastMCP.run()

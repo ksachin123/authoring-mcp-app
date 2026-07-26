@@ -41,14 +41,10 @@ def _widget_result(widget_uri: str, structured_content: dict[str, Any], summary_
 
 
 def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> None:
-    # widget_uri is computed by server.py from a hash of the built widget's
-    # content, not hardcoded here -- ChatGPT appears to cache widget resource
-    # content by URI, sometimes even across what should be fresh
-    # conversations/reconnects (confirmed live twice: a stale render
-    # reappeared verbatim, and a CSS/layout fix that was verifiably live
-    # server-side rendered identically to before the fix). A content-derived
-    # URI changes automatically on every new deploy, so there's never a
-    # stale cache to hit -- see server.py's _compute_widget_uri().
+    # widget_uri is passed in from server.py (a single fixed constant, see
+    # its own comment on why a content-hash-derived URI was tried and
+    # reverted) rather than hardcoded here, so the resource decorator and
+    # this tool meta can never drift out of sync.
     widget_meta = {"ui": {"resourceUri": widget_uri}, "openai/outputTemplate": widget_uri}
 
     @mcp.tool(description="Register an analyst-uploaded document as a Source.")
