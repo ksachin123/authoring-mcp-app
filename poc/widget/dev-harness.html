@@ -39,27 +39,6 @@
         background: white;
         max-width: 640px;
       }
-      #root {
-        padding: 16px;
-      }
-      /* Same reset as the real widget's index.html -- kept in sync manually
-         since this harness loads bundle.js directly, not through the server's
-         inlining path. */
-      h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
-      ul { list-style: none; margin: 0; padding: 0; }
-      li { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #e5e5e5; }
-      li:last-child { border-bottom: none; }
-      p { margin: 0 0 8px; }
-      button {
-        margin-right: 6px;
-        padding: 4px 10px;
-        border: 1px solid #d0d0d0;
-        border-radius: 6px;
-        background: #f7f7f7;
-        cursor: pointer;
-        font-size: 13px;
-      }
-      button:hover { background: #eee; }
     </style>
   </head>
   <body>
@@ -79,6 +58,12 @@
       it only ever loads dist/bundle.js directly over a normal HTTP origin,
       which is why a relative <script src> works here but not inside the
       real ui:// resource (see server.py's report_workspace_widget()).
+
+      Widget CSS is fetched from dist/index.html at runtime (see the
+      injectRealWidgetCss() script below) rather than duplicated here --
+      an earlier version hand-copied it and it silently drifted out of
+      sync with the real styling within the same session. This may cause
+      a brief flash of unstyled content on load; that's fine for a dev tool.
     -->
     <div id="harness-bar">
       <strong>Widget Dev Harness</strong>
@@ -94,6 +79,18 @@
     </div>
 
     <script>
+      // Single source of truth for widget CSS is dist/index.html -- fetch
+      // its <style> block and inject it here instead of hand-copying it.
+      fetch('./dist/index.html')
+        .then((r) => r.text())
+        .then((html) => {
+          const match = html.match(/<style>([\s\S]*?)<\/style>/);
+          if (!match) return;
+          const styleEl = document.createElement('style');
+          styleEl.textContent = match[1];
+          document.head.appendChild(styleEl);
+        });
+
       const SCENARIOS = {
         pending: [
           {

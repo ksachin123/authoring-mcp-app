@@ -9,6 +9,12 @@ interface ArtefactSummary {
   claim_ids: string[];
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  thesis_point: 'Thesis Point',
+  data_extract: 'Data Extract',
+  comparison_table: 'Comparison Table',
+};
+
 export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: ArtefactSummary[] }) {
   const [artefacts, setArtefacts] = useState(initialArtefacts);
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
@@ -51,25 +57,48 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
     );
   }
 
+  const pending = artefacts.filter((a) => a.status === 'pending_approval');
+
   return (
     <div ref={containerRef}>
-      <h2>Pending Artefacts</h2>
-      <ul>
-        {artefacts
-          .filter((a) => a.status === 'pending_approval')
-          .map((artefact) => (
-            <li key={artefact.id}>
-              <p>{artefact.content}</p>
-              {artefact.claim_ids.map((claimId, i) => (
-                <button key={claimId} onClick={() => setSelectedClaimId(claimId)}>
-                  [{i + 1}]
+      <div className="workspace-header">
+        <h2>Pending Artefacts</h2>
+        <span className="count-badge">{pending.length}</span>
+      </div>
+
+      {pending.length === 0 ? (
+        <div className="empty-state">No artefacts are waiting for review right now.</div>
+      ) : (
+        <ul className="artefact-list">
+          {pending.map((artefact) => (
+            <li key={artefact.id} className="artefact-card">
+              <span className="artefact-type-badge">
+                {TYPE_LABELS[artefact.type] ?? artefact.type}
+              </span>
+              <p className="artefact-content">{artefact.content}</p>
+              <div className="artefact-actions">
+                {artefact.claim_ids.map((claimId, i) => (
+                  <button
+                    key={claimId}
+                    className={`citation-chip${selectedClaimId === claimId ? ' is-selected' : ''}`}
+                    onClick={() => setSelectedClaimId(claimId)}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+                <button className="approve-button" onClick={() => approve(artefact.id)}>
+                  Approve
                 </button>
-              ))}
-              <button onClick={() => approve(artefact.id)}>Approve</button>
+              </div>
+              {selectedClaimId && artefact.claim_ids.includes(selectedClaimId) && (
+                <div className="citation-panel" data-testid="citation-panel">
+                  Citation: {selectedClaimId}
+                </div>
+              )}
             </li>
           ))}
-      </ul>
-      {selectedClaimId && <div data-testid="citation-panel">Citation: {selectedClaimId}</div>}
+        </ul>
+      )}
     </div>
   );
 }
