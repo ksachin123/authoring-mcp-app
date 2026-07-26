@@ -149,9 +149,17 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> Non
         meta=widget_meta,
     )
     @trace_tool_call
-    def list_pending_artefacts_tool() -> str:
+    def list_pending_artefacts_tool() -> list[dict]:
+        # Returning list[dict] directly (not json.dumps(...)) matters here:
+        # window.openai.callTool() hands the widget's JS the tool's
+        # structuredContent as a real object, not a JSON string -- a plain
+        # `-> str` return gets FastMCP-auto-wrapped as {"result": "<the json
+        # string>"}, and entry.tsx's JSON.parse(result) then fails with
+        # `"[object Object]" is not valid JSON` (confirmed live). Returning
+        # the list directly makes structuredContent {"result": [...]} with a
+        # real array already, so entry.tsx just reads result.result.
         artefacts = list_artefacts_by_status(db, "pending_approval")
-        return json.dumps([asdict(a) for a in artefacts])
+        return [asdict(a) for a in artefacts]
 
     @mcp.tool(
         description="Assemble a draft section from approved artefacts (not persisted until commit_section)."

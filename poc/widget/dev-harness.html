@@ -140,17 +140,24 @@
         },
         async callTool(name, args) {
           log(`callTool(${name}, ${JSON.stringify(args)})`);
+          // Real window.openai.callTool() hands back structuredContent as an
+          // actual object, never a JSON string -- an earlier version of this
+          // mock returned JSON.stringify(...) here, which masked a real bug
+          // (entry.tsx/ReportWorkspace.tsx both called JSON.parse() on what
+          // ChatGPT actually hands back as an already-parsed object,
+          // producing `"[object Object]" is not valid JSON` live in
+          // ChatGPT, not caught locally because this mock didn't match
+          // production's actual shape). Return real objects, matching each
+          // tool's real structuredContent shape exactly.
           if (name === 'list_pending_artefacts_tool') {
-            // Mirrors the real list_pending_artefacts_tool: entry.tsx calls
-            // this itself on mount to fetch its own data.
-            return JSON.stringify(currentArtefacts.filter((a) => a.status === 'pending_approval'));
+            return { result: currentArtefacts.filter((a) => a.status === 'pending_approval') };
           }
           if (name === 'approve_artefact_tool') {
             const artefact = currentArtefacts.find((a) => a.id === args.artefact_id);
             if (artefact) artefact.status = 'approved';
-            return JSON.stringify({ id: args.artefact_id, status: 'approved' });
+            return { artefact: { ...artefact } };
           }
-          return JSON.stringify({ note: 'unmocked tool call', name, args });
+          return { note: 'unmocked tool call', name, args };
         },
         notifyIntrinsicHeight(height) {
           log(`notifyIntrinsicHeight(${height})`);

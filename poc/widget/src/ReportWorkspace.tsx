@@ -46,14 +46,18 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
 
   async function approve(artefactId: string) {
     const bridge = getOpenAiBridge();
-    const result = await bridge.callTool('approve_artefact_tool', {
+    // window.openai.callTool() hands back structuredContent as a real
+    // object, not a JSON string -- approve_artefact_tool's structuredContent
+    // is {artefact: {...}} (see _widget_result in register_tools.py), so no
+    // JSON.parse here (same class of bug as entry.tsx's list fetch: calling
+    // JSON.parse on an already-parsed object fails).
+    const result = (await bridge.callTool('approve_artefact_tool', {
       actor: 'analyst-1',
       artefact_id: artefactId,
       decision: 'approve'
-    });
-    const parsed = JSON.parse(result as string);
+    })) as { artefact: { status: string } };
     setArtefacts((prev) =>
-      prev.map((a) => (a.id === artefactId ? { ...a, status: parsed.status } : a))
+      prev.map((a) => (a.id === artefactId ? { ...a, status: result.artefact.status } : a))
     );
   }
 

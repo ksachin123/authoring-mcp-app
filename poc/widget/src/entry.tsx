@@ -17,9 +17,14 @@ waitForOpenAiBridge()
     // run_eval_tool/approve_artefact_tool each only return the single
     // artefact they just acted on, never the full pending set, so the
     // widget calls its own dedicated tool on mount instead.
-    const result = await bridge.callTool('list_pending_artefacts_tool', {});
-    const initialArtefacts = JSON.parse(result as string);
-    root.render(<ReportWorkspace initialArtefacts={initialArtefacts} />);
+    // window.openai.callTool() hands back the tool's structuredContent as a
+    // real object, not a JSON string -- list_pending_artefacts_tool returns
+    // list[dict] directly server-side so this is {result: [...]} already, no
+    // JSON.parse needed (confirmed live: JSON.parse on this object produced
+    // `"[object Object]" is not valid JSON`, since the object stringifies to
+    // that before parsing).
+    const result = (await bridge.callTool('list_pending_artefacts_tool', {})) as { result: unknown };
+    root.render(<ReportWorkspace initialArtefacts={(result.result as any[]) ?? []} />);
   })
   .catch((err: Error) => {
     rootEl.textContent = `Widget failed to initialize: ${err.message}`;
