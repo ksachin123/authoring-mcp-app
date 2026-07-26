@@ -5,7 +5,7 @@ from typing import Any, Optional
 from mcp import types
 from mcp.server.fastmcp import FastMCP
 from research_authoring.logging_utils import trace_tool_call
-from research_authoring.db.artefact_repository import get_latest_artefact
+from research_authoring.db.artefact_repository import get_latest_artefact, list_artefacts_by_status
 from research_authoring.tools.ingest_document import ingest_document
 from research_authoring.tools.ingest_connector_result import ingest_connector_result
 from research_authoring.tools.ingest_web_result import ingest_web_result
@@ -130,6 +130,19 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> Non
             {"artefact": asdict(artefact)},
             f"Artefact {artefact_id} {artefact.status}.",
         )
+
+    @mcp.tool(
+        description=(
+            "List artefacts currently pending approval. Called by the widget itself on "
+            "mount to fetch its own data (window.openai.callTool) -- not something the "
+            "model needs to call, since run_eval_tool/approve_artefact_tool each only "
+            "return the single artefact they just acted on, never the full pending set."
+        )
+    )
+    @trace_tool_call
+    def list_pending_artefacts_tool() -> str:
+        artefacts = list_artefacts_by_status(db, "pending_approval")
+        return json.dumps([asdict(a) for a in artefacts])
 
     @mcp.tool(
         description="Assemble a draft section from approved artefacts (not persisted until commit_section)."

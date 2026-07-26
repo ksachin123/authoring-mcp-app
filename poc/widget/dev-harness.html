@@ -140,6 +140,11 @@
         },
         async callTool(name, args) {
           log(`callTool(${name}, ${JSON.stringify(args)})`);
+          if (name === 'list_pending_artefacts_tool') {
+            // Mirrors the real list_pending_artefacts_tool: entry.tsx calls
+            // this itself on mount to fetch its own data.
+            return JSON.stringify(currentArtefacts.filter((a) => a.status === 'pending_approval'));
+          }
           if (name === 'approve_artefact_tool') {
             const artefact = currentArtefacts.find((a) => a.id === args.artefact_id);
             if (artefact) artefact.status = 'approved';

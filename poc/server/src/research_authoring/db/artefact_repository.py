@@ -67,6 +67,28 @@ def get_latest_artefact(db: sqlite3.Connection, id: str) -> Optional[Artefact]:
     return _row_to_artefact(row) if row else None
 
 
+def list_artefacts_by_status(db: sqlite3.Connection, status: str) -> list[Artefact]:
+    """Latest version of every artefact whose current status matches, in
+    creation order. Backs list_pending_artefacts_tool -- the widget calls
+    that on mount to fetch its own data rather than relying on any seeded
+    initial state, since no tool response carries the full pending set
+    (run_eval_tool/approve_artefact_tool each only return the one artefact
+    they just acted on).
+    """
+    rows = db.execute(
+        """
+        SELECT a.* FROM artefacts a
+        INNER JOIN (
+            SELECT id, MAX(version) AS max_version FROM artefacts GROUP BY id
+        ) latest ON a.id = latest.id AND a.version = latest.max_version
+        WHERE a.status = ?
+        ORDER BY a.rowid ASC
+        """,
+        (status,),
+    ).fetchall()
+    return [_row_to_artefact(row) for row in rows]
+
+
 def create_artefact_version(db: sqlite3.Connection, id: str, **patch) -> Artefact:
     allowed_fields = {"content", "claim_ids", "status", "approved_by", "approved_at"}
     unknown_keys = set(patch.keys()) - allowed_fields

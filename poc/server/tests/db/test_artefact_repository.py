@@ -4,6 +4,7 @@ from research_authoring.db.artefact_repository import (
     create_artefact,
     get_latest_artefact,
     create_artefact_version,
+    list_artefacts_by_status,
 )
 
 
@@ -61,4 +62,33 @@ def test_create_artefact_version_rejects_unknown_patch_keys(tmp_path):
     with pytest.raises(ValueError, match="Unknown patch field"):
         create_artefact_version(db, artefact.id, staus="approved")
 
+    db.close()
+
+
+def test_list_artefacts_by_status_returns_only_the_latest_version_of_matching_artefacts(tmp_path):
+    db = create_db(str(tmp_path / "test.db"))
+
+    pending = create_artefact(
+        db, type="thesis_point", content="v1", claim_ids=["claim-1"],
+        status="draft", approved_by=None, approved_at=None,
+    )
+    create_artefact_version(db, pending.id, status="pending_approval")
+
+    approved = create_artefact(
+        db, type="data_extract", content="v1", claim_ids=["claim-2"],
+        status="draft", approved_by=None, approved_at=None,
+    )
+    create_artefact_version(db, approved.id, status="approved", approved_by="analyst-1")
+
+    other_pending = create_artefact(
+        db, type="comparison_table", content="v1", claim_ids=["claim-3"],
+        status="pending_approval", approved_by=None, approved_at=None,
+    )
+
+    results = list_artefacts_by_status(db, "pending_approval")
+
+    assert [a.id for a in results] == [pending.id, other_pending.id]
+    assert all(a.status == "pending_approval" for a in results)
+    assert results[0].version == 2  # the latest version, not the superseded draft
+    assert results[1].version == 1
     db.close()

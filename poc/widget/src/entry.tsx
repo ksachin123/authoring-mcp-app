@@ -10,10 +10,15 @@ const root = createRoot(rootEl);
 // (ChatGPT's own host, not a normal browser tab) -- render failures as visible
 // text instead, so a screenshot alone is enough to diagnose what broke.
 waitForOpenAiBridge()
-  .then((bridge) => {
-    // POC shortcut: per design, content should be fetched fresh from the
-    // server, not seeded from widgetState.
-    const initialArtefacts = (bridge.widgetState?.artefacts as any[]) ?? [];
+  .then(async (bridge) => {
+    // Fetch fresh from the server rather than seeding from widgetState --
+    // nothing ever populates widgetState.artefacts (confirmed live: widget
+    // rendered correctly but reported "0 pending artefacts" every time).
+    // run_eval_tool/approve_artefact_tool each only return the single
+    // artefact they just acted on, never the full pending set, so the
+    // widget calls its own dedicated tool on mount instead.
+    const result = await bridge.callTool('list_pending_artefacts_tool', {});
+    const initialArtefacts = JSON.parse(result as string);
     root.render(<ReportWorkspace initialArtefacts={initialArtefacts} />);
   })
   .catch((err: Error) => {
