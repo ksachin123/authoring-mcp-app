@@ -138,15 +138,19 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> Non
             "model needs to call, since run_eval_tool/approve_artefact_tool each only "
             "return the single artefact they just acted on, never the full pending set."
         ),
-        # ChatGPT's widget-side window.openai.callTool appears to only permit
-        # calling tools associated with the current widget via this same
-        # `_meta.ui.resourceUri` link -- without it, the widget's own
-        # bridge.callTool('list_pending_artefacts_tool', {}) call failed with
-        # "MCP Resource not found" even though the tool itself works fine and
-        # is visible in tools/list. run_eval_tool/approve_artefact_tool
-        # needed this same meta for the *model* to trigger the widget; this
-        # is the analogous requirement for the *widget* to call a tool.
-        meta=widget_meta,
+        # Per the MCP Apps spec (modelcontextprotocol/ext-apps, SEP-1865),
+        # tools default to `_meta.ui.visibility: ["model", "app"]` -- callable
+        # by both -- so no meta was actually required for the widget to call
+        # this tool at all. An earlier fix mistakenly gave this tool the full
+        # widget_meta (including openai/outputTemplate) to try to fix a
+        # "MCP Resource not found" error; a reconnect of the app in ChatGPT
+        # was the actual fix for that (a newly-added tool wasn't in the
+        # client's cached tool list yet), not this meta. Giving a pure data
+        # tool outputTemplate meta was actually wrong: it would incorrectly
+        # retrigger the widget if the model ever called this tool directly.
+        # visibility=["app"] instead hides it from the model entirely and
+        # restricts it to widget-only calls, matching its actual purpose.
+        meta={"ui": {"visibility": ["app"]}},
     )
     @trace_tool_call
     def list_pending_artefacts_tool() -> list[dict]:

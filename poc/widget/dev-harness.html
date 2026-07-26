@@ -140,24 +140,27 @@
         },
         async callTool(name, args) {
           log(`callTool(${name}, ${JSON.stringify(args)})`);
-          // Real window.openai.callTool() hands back structuredContent as an
-          // actual object, never a JSON string -- an earlier version of this
-          // mock returned JSON.stringify(...) here, which masked a real bug
-          // (entry.tsx/ReportWorkspace.tsx both called JSON.parse() on what
-          // ChatGPT actually hands back as an already-parsed object,
-          // producing `"[object Object]" is not valid JSON` live in
-          // ChatGPT, not caught locally because this mock didn't match
-          // production's actual shape). Return real objects, matching each
-          // tool's real structuredContent shape exactly.
+          // Per the MCP Apps spec (confirmed against the AppBridge reference
+          // implementation's callTool(), typed to resolve CallToolResultSchema),
+          // callTool() resolves to the FULL CallToolResult envelope
+          // ({content, structuredContent, isError}), not the bare structured
+          // data. Two earlier versions of this mock got this wrong (first
+          // JSON.stringify(...) strings, then bare structuredContent objects),
+          // each masking a real live bug because the mock didn't match
+          // production's actual shape. Wrap every response in the same
+          // envelope shape real tool calls actually produce.
+          function callToolResult(structuredContent) {
+            return { content: [{ type: 'text', text: JSON.stringify(structuredContent) }], structuredContent, isError: false };
+          }
           if (name === 'list_pending_artefacts_tool') {
-            return { result: currentArtefacts.filter((a) => a.status === 'pending_approval') };
+            return callToolResult({ result: currentArtefacts.filter((a) => a.status === 'pending_approval') });
           }
           if (name === 'approve_artefact_tool') {
             const artefact = currentArtefacts.find((a) => a.id === args.artefact_id);
             if (artefact) artefact.status = 'approved';
-            return { artefact: { ...artefact } };
+            return callToolResult({ artefact: { ...artefact } });
           }
-          return { note: 'unmocked tool call', name, args };
+          return callToolResult({ note: 'unmocked tool call', name, args });
         },
         notifyIntrinsicHeight(height) {
           log(`notifyIntrinsicHeight(${height})`);

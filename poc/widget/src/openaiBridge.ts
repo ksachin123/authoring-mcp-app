@@ -1,5 +1,19 @@
+// Per the MCP Apps spec (modelcontextprotocol/ext-apps, SEP-1865) and
+// confirmed against the AppBridge reference implementation's callTool()
+// (typed to resolve CallToolResultSchema): calling a tool from a widget
+// resolves to the FULL CallToolResult envelope, not the bare structured
+// data. This was the actual root cause of repeated live failures
+// ("[object Object]" is not valid JSON, then "artefacts.filter is not a
+// function") -- code here was treating the resolved value as if it were
+// already `structuredContent` itself.
+export interface CallToolResult {
+  content: Array<{ type: string; text?: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
 export interface OpenAiBridge {
-  callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
+  callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult>;
   widgetState: Record<string, unknown>;
   setWidgetState(state: Record<string, unknown>): void;
   // Confirmed present on window.openai via a live bridge-keys dump, but

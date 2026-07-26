@@ -36,16 +36,12 @@ waitForOpenAiBridge()
     // widget calls its own dedicated tool on mount instead.
     const result = await bridge.callTool('list_pending_artefacts_tool', {});
 
-    // Diagnostic dump of the raw shape, shown only until render succeeds --
-    // window.openai.callTool() hands back the tool's structuredContent as a
-    // real object, not a JSON string. list_pending_artefacts_tool returns
-    // list[dict] directly server-side, so this is expected to be
-    // {result: [...]} already (confirmed via a direct local call), but if
-    // that assumption is wrong, this text says exactly what came back
-    // instead of the page going silently blank.
-    showDiagnostic(`Got callTool result: ${JSON.stringify(result).slice(0, 800)}`);
-
-    const initialArtefacts = (result as { result?: unknown[] })?.result ?? [];
+    // Per the MCP Apps spec, callTool() resolves to the full CallToolResult
+    // envelope -- the actual data is under result.structuredContent, not on
+    // result directly. list_pending_artefacts_tool returns list[dict]
+    // server-side, so structuredContent is {result: [...]} (FastMCP's
+    // auto-wrap for a plain-list return).
+    const initialArtefacts = (result.structuredContent?.result as unknown[]) ?? [];
     root.render(<ReportWorkspace initialArtefacts={initialArtefacts as any[]} />);
   })
   .catch((err: unknown) => {
