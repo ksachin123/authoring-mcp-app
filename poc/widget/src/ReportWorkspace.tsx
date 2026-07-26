@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getOpenAiBridge } from './openaiBridge.js';
 
 interface ArtefactSummary {
@@ -12,11 +12,31 @@ interface ArtefactSummary {
 export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: ArtefactSummary[] }) {
   const [artefacts, setArtefacts] = useState(initialArtefacts);
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const bridge = getOpenAiBridge();
     bridge.setWidgetState({ ...bridge.widgetState, screen: 'report_workspace' });
   }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    // Without this, the host apparently guesses the iframe's height instead
+    // of using the widget's actual content size, producing overlapping/
+    // clipped rendering (confirmed live).
+    const report = () => {
+      const bridge = getOpenAiBridge();
+      bridge.notifyIntrinsicHeight?.(el.scrollHeight);
+      bridge.notifyIntrinsicWidth?.(el.scrollWidth);
+    };
+
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [artefacts, selectedClaimId]);
 
   async function approve(artefactId: string) {
     const bridge = getOpenAiBridge();
@@ -32,7 +52,7 @@ export function ReportWorkspace({ initialArtefacts }: { initialArtefacts: Artefa
   }
 
   return (
-    <div>
+    <div ref={containerRef}>
       <h2>Pending Artefacts</h2>
       <ul>
         {artefacts

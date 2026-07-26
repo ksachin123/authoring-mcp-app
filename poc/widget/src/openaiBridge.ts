@@ -2,6 +2,12 @@ export interface OpenAiBridge {
   callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
   widgetState: Record<string, unknown>;
   setWidgetState(state: Record<string, unknown>): void;
+  // Confirmed present on window.openai via a live bridge-keys dump, but
+  // previously unused -- without reporting real content size, the host
+  // apparently sizes the iframe incorrectly, producing overlapping/clipped
+  // content (confirmed live: distorted, not fully visible widget).
+  notifyIntrinsicHeight?(height: number): void;
+  notifyIntrinsicWidth?(width: number): void;
 }
 
 declare global {

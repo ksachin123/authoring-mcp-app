@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 
 mkdirSync('dist', { recursive: true });
 
@@ -11,9 +11,10 @@ await build({
   jsx: 'automatic'
 });
 
-writeFileSync(
-  'dist/index.html',
-  `<!doctype html><html><head><meta charset="utf-8"><title>Research Authoring Workspace</title></head><body><div id="root"></div><script type="module" src="./bundle.js"></script></body></html>`
-);
+// Previously duplicated index.html's markup as a hardcoded string here,
+// which silently drifted out of sync with the real index.html (a CSS-reset
+// fix landed in index.html and had zero effect on the built widget because
+// of this). Read the actual file instead so there's one source of truth.
+writeFileSync('dist/index.html', readFileSync('index.html', 'utf8'));
 
 console.log('Widget bundle built at dist/bundle.js');
