@@ -137,7 +137,16 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> Non
             "mount to fetch its own data (window.openai.callTool) -- not something the "
             "model needs to call, since run_eval_tool/approve_artefact_tool each only "
             "return the single artefact they just acted on, never the full pending set."
-        )
+        ),
+        # ChatGPT's widget-side window.openai.callTool appears to only permit
+        # calling tools associated with the current widget via this same
+        # `_meta.ui.resourceUri` link -- without it, the widget's own
+        # bridge.callTool('list_pending_artefacts_tool', {}) call failed with
+        # "MCP Resource not found" even though the tool itself works fine and
+        # is visible in tools/list. run_eval_tool/approve_artefact_tool
+        # needed this same meta for the *model* to trigger the widget; this
+        # is the analogous requirement for the *widget* to call a tool.
+        meta=widget_meta,
     )
     @trace_tool_call
     def list_pending_artefacts_tool() -> str:
