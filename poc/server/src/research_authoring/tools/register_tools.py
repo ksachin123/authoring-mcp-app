@@ -18,23 +18,7 @@ from research_authoring.tools.assemble_report import assemble_report
 from research_authoring.tools.export_report import export_report_to_markdown
 
 
-_WIDGET_URI = "ui://widget/report-workspace.html"
-
-# Both the current MCP Apps standard key (`ui.resourceUri`) and the older
-# ChatGPT-specific `openai/outputTemplate` are set together: live logging
-# showed ChatGPT receiving `openai/outputTemplate` correctly on every
-# run_eval_tool/approve_artefact_tool call yet never once calling
-# resources/read for the widget across a whole session -- OpenAI's current
-# Apps SDK docs describe `ui.resourceUri` (plus a matching mimeType on the
-# resource itself, see server.py) as what widget recognition actually keys
-# off today, with `openai/outputTemplate` kept only as a compatibility alias.
-_WIDGET_META = {
-    "ui": {"resourceUri": _WIDGET_URI},
-    "openai/outputTemplate": _WIDGET_URI,
-}
-
-
-def _widget_result(structured_content: dict[str, Any], summary_text: str) -> types.CallToolResult:
+def _widget_result(widget_uri: str, structured_content: dict[str, Any], summary_text: str) -> types.CallToolResult:
     # ChatGPT's Apps SDK client decides whether to render the widget based on
     # `_meta` on the *per-call* result, not just the tool's static definition
     # (confirmed against the working reference app in ../mcp-app, which sets
@@ -52,11 +36,21 @@ def _widget_result(structured_content: dict[str, Any], summary_text: str) -> typ
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=summary_text)],
         structuredContent=structured_content,
-        **{"_meta": _WIDGET_META},
+        **{"_meta": {"ui": {"resourceUri": widget_uri}, "openai/outputTemplate": widget_uri}},
     )
 
 
-def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
+def register_tools(mcp: FastMCP, db: sqlite3.Connection, widget_uri: str) -> None:
+    # widget_uri is computed by server.py from a hash of the built widget's
+    # content, not hardcoded here -- ChatGPT appears to cache widget resource
+    # content by URI, sometimes even across what should be fresh
+    # conversations/reconnects (confirmed live twice: a stale render
+    # reappeared verbatim, and a CSS/layout fix that was verifiably live
+    # server-side rendered identically to before the fix). A content-derived
+    # URI changes automatically on every new deploy, so there's never a
+    # stale cache to hit -- see server.py's _compute_widget_uri().
+    widget_meta = {"ui": {"resourceUri": widget_uri}, "openai/outputTemplate": widget_uri}
+
     @mcp.tool(description="Register an analyst-uploaded document as a Source.")
     @trace_tool_call
     def ingest_document_tool(
@@ -116,25 +110,27 @@ def register_tools(mcp: FastMCP, db: sqlite3.Connection) -> None:
 
     @mcp.tool(
         description="Run the groundedness eval gate on an artefact before it can be approved.",
-        meta=_WIDGET_META,
+        meta=widget_meta,
     )
     @trace_tool_call
     def run_eval_tool(actor: str, artefact_id: str) -> types.CallToolResult:
         artefact, eval_run_id = run_eval(db, actor=actor, artefact_id=artefact_id)
         structured = {"artefact": asdict(artefact), "eval_run_id": eval_run_id}
         return _widget_result(
+            widget_uri,
             structured,
             f"Eval run {eval_run_id} completed for artefact {artefact_id}: status={artefact.status}.",
         )
 
     @mcp.tool(
         description="Human approval gate: approve or reject a pending_approval artefact.",
-        meta=_WIDGET_META,
+        meta=widget_meta,
     )
     @trace_tool_call
     def approve_artefact_tool(actor: str, artefact_id: str, decision: str) -> types.CallToolResult:
         artefact = approve_artefact(db, actor=actor, artefact_id=artefact_id, decision=decision)
         return _widget_result(
+            widget_uri,
             {"artefact": asdict(artefact)},
             f"Artefact {artefact_id} {artefact.status}.",
         )

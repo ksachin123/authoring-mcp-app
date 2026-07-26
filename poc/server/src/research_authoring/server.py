@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from dotenv import load_dotenv
@@ -16,18 +17,6 @@ db_path = os.environ.get("DB_PATH", "./data/poc.db")
 os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
 db = create_db(db_path)
 logger.info("db ready path=%s", db_path)
-
-# NOTE: deviation from the task brief. The installed mcp SDK's FastMCP.run()
-# only accepts a `transport` argument (and `mount_path`) -- host/port are not
-# accepted there. Instead, FastMCP.__init__ takes `host`/`port` directly, which
-# it stores in self.settings and uses when constructing the streamable-http
-# ASGI app. Render (and most PaaS hosts) require binding 0.0.0.0 and the port
-# they inject via the PORT env var, not localhost/a hardcoded port. See Task 18
-# for the full Render deployment configuration.
-_port = int(os.environ.get("PORT", 8000))
-mcp = FastMCP("research-authoring-poc", host="0.0.0.0", port=_port)
-register_tools(mcp, db)
-logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 
 # NOTE: deviation from the task brief for Step 9. The brief's example uses a
 # bare `@mcp.resource("ui://widget/report-workspace.html")` decorator with no
@@ -57,9 +46,7 @@ logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 # "required for widget recognition", plus `_meta.ui.resourceUri` (not just
 # `openai/outputTemplate`) linking the tool to the resource, and a `_meta.ui`
 # block on the resource itself. Switched to that mimeType and meta shape
-# here; `openai/outputTemplate` is kept alongside it on the tool side (see
-# register_tools.py's `_WIDGET_META`) since OpenAI's docs describe it as a
-# still-recognized compatibility alias, not something to drop.
+# here.
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "..", "widget", "dist")
 
 for _asset in ("index.html", "bundle.js"):
@@ -70,50 +57,48 @@ for _asset in ("index.html", "bundle.js"):
         logger.warning("widget asset MISSING (widget will not render): %s", _asset_path)
 
 
-# TEMPORARY debugging aid, now DISABLED. Bisection with this minimal widget
-# (confirmed live in ChatGPT) established:
-#  - script execution is NOT blocked by size/complexity (a dependency-free
-#    widget ran fine, ruling that out as the cause of the real bundle's
-#    earlier blank render)
-#  - it renders as a real styled/sandboxed iframe (a visible colored
-#    bordered box showed up, not just text dumped inline into the chat)
-#  - window.openai IS present, exposing exactly the members the real widget
-#    depends on (callTool, widgetState, setWidgetState), among many others
-# So the platform fully supports what the real widget needs. Re-enabling the
-# real bundle now that waitForOpenAiBridge()'s visible-error-on-failure
-# fallback (entry.tsx) can actually tell us something concrete if it still
-# fails, instead of a silent blank div.
-_WIDGET_DEBUG_MINIMAL = False
-_MINIMAL_TEST_WIDGET_HTML = (
-    '<!doctype html><html><head><meta charset="utf-8">'
-    "<title>Minimal Test Widget</title>"
-    # Visible background/border: if this box doesn't show up, we're not
-    # actually looking at a styled iframe at all -- the content is being
-    # dumped inline into the chat as if it were plain text.
-    "<style>body{background:#dbeeff;border:4px solid #0055ff;margin:0;"
-    "padding:14px;font-family:sans-serif;font-size:14px;}</style>"
-    "</head>"
-    '<body><div id="root">before-script ran</div>'
-    "<script>"
-    "var hasBridge = typeof window.openai !== 'undefined';"
-    "var bridgeKeys = hasBridge ? Object.keys(window.openai).join(', ') : 'n/a';"
-    "document.getElementById('root').textContent = "
-    "'JS executed at ' + new Date().toISOString() + "
-    "' | window.openai present: ' + hasBridge + "
-    "' | bridge keys: ' + bridgeKeys;"
-    "</script></body></html>"
-)
+def _compute_widget_uri(widget_dist: str) -> str:
+    # ChatGPT appears to cache widget resource content by URI, sometimes
+    # even across what should be fresh conversations/reconnects (confirmed
+    # live twice: a stale render reappeared verbatim, and a CSS/layout fix
+    # that was verifiably live server-side rendered identically to before
+    # the fix). Deriving the URI from a content hash means every new deploy
+    # with a changed widget automatically gets a fresh URI -- no stale cache
+    # to hit, and no need to remember to hand-bump a version suffix.
+    try:
+        with open(os.path.join(widget_dist, "index.html"), "rb") as f:
+            index_bytes = f.read()
+        with open(os.path.join(widget_dist, "bundle.js"), "rb") as f:
+            bundle_bytes = f.read()
+    except FileNotFoundError:
+        return "ui://widget/report-workspace-unbuilt.html"
+    digest = hashlib.sha256(index_bytes + bundle_bytes).hexdigest()[:12]
+    return f"ui://widget/report-workspace-{digest}.html"
+
+
+_WIDGET_URI = _compute_widget_uri(_WIDGET_DIST)
+logger.info("widget resource uri: %s", _WIDGET_URI)
+
+# NOTE: deviation from the task brief. The installed mcp SDK's FastMCP.run()
+# only accepts a `transport` argument (and `mount_path`) -- host/port are not
+# accepted there. Instead, FastMCP.__init__ takes `host`/`port` directly, which
+# it stores in self.settings and uses when constructing the streamable-http
+# ASGI app. Render (and most PaaS hosts) require binding 0.0.0.0 and the port
+# they inject via the PORT env var, not localhost/a hardcoded port. See Task 18
+# for the full Render deployment configuration.
+_port = int(os.environ.get("PORT", 8000))
+mcp = FastMCP("research-authoring-poc", host="0.0.0.0", port=_port)
+register_tools(mcp, db, widget_uri=_WIDGET_URI)
+logger.info("registered %d tools", len(mcp._tool_manager.list_tools()))
 
 
 @mcp.resource(
-    "ui://widget/report-workspace.html",
+    _WIDGET_URI,
     mime_type="text/html;profile=mcp-app",
     meta={"ui": {"prefersBorder": True}},
 )
 def report_workspace_widget() -> str:
-    logger.info("resource read: ui://widget/report-workspace.html (minimal=%s)", _WIDGET_DEBUG_MINIMAL)
-    if _WIDGET_DEBUG_MINIMAL:
-        return _MINIMAL_TEST_WIDGET_HTML
+    logger.info("resource read: %s", _WIDGET_URI)
     with open(os.path.join(_WIDGET_DIST, "index.html")) as f:
         html = f.read()
     with open(os.path.join(_WIDGET_DIST, "bundle.js")) as f:
