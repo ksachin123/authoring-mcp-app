@@ -79,6 +79,27 @@ npx @modelcontextprotocol/inspector
 
 Then point it at `http://localhost:8000/mcp` to list/call tools and resources, including rendering the widget, without needing ChatGPT Developer Mode.
 
+#### Iterating on the widget UI without ChatGPT
+
+MCP Inspector proves the wiring works, but for actually seeing and clicking through the
+widget's UI, use the dev harness instead — a plain HTML page that mocks `window.openai`
+(seeded with sample artefact data covering different states: pending artefacts, an empty
+list, and a many-artefacts scroll/size test) and loads the real built `dist/bundle.js`
+directly:
+
+```bash
+cd poc/widget
+npm run build          # rebuild after any widget change
+npx serve .
+```
+
+Open `dev-harness.html` at the URL `serve` prints. Switch scenarios with the buttons in
+the dark bar at the top, and watch `notifyIntrinsicHeight`/`callTool` calls in the log
+strip beneath it. This is the fastest loop for widget layout/behavior changes — no
+Render deploy, no ChatGPT reconnect, no resource-caching surprises, since it's a normal
+browser tab loading `bundle.js` over plain HTTP rather than through the `ui://` scheme
+ChatGPT uses.
+
 ### 4. Configure the Skill
 
 Upload [`poc/skill/report-authoring-skill.md`](poc/skill/report-authoring-skill.md) as a workspace Skill following [OpenAI's current instructions](https://help.openai.com/en/articles/20001066-skills-in-chatgpt), scoped to your test user/role.
